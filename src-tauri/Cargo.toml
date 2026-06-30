@@ -1,0 +1,27 @@
+[package]
+name = "lume-app"
+description = "L4 application: the Tauri shell and the typed command surface the UI calls. The composition root that wires core, store, ipc, index, media, and platform together."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+# Tauri v2 convention: business entry point in a lib so desktop and (future)
+# mobile share it; main.rs is a thin shim.
+[lib]
+name = "lume_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+lume-core.workspace = true
+tauri = { version = "2", features = [] }
+serde.workspace = true
+serde_json.workspace = true
+tracing = { workspace = true }
+
+# TODO(M1): depend on lume-store / lume-ipc / lume-index as the commands get
+#           wired to the real engine. Kept out until then to avoid dead links.

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Least-privilege capability set for the main window (DESIGN §14): expose only what the UI needs, never broad fs/shell access.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

@@ -1,0 +1,16 @@
+[package]
+name = "lume-core"
+description = "L0 foundation: domain types, single-source Config, error types, and the three trait seams (VectorStore, Sidecar, Platform)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+half.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

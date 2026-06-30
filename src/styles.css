@@ -1,0 +1,13 @@
+@import "tailwindcss";
+
+/* Lume is a local, native-feeling macOS app — dark, quiet, out of the way. */
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}

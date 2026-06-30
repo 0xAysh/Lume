@@ -1,0 +1,15 @@
+[package]
+name = "lume-ipc"
+description = "L2 inference seam: the length-prefixed Unix-socket wire contract and the Rust Sidecar adapter to the Python black box."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+lume-core.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

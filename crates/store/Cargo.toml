@@ -1,0 +1,11 @@
+[package]
+name = "lume-store"
+description = "L1 persistence: sqlite + sqlite-vec adapter for VectorStore and the metadata store (WAL, single-writer funnel)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+lume-core.workspace = true

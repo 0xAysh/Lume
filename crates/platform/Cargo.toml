@@ -1,0 +1,11 @@
+[package]
+name = "lume-platform"
+description = "Cross-cutting Platform adapter: macOS power, thermal pressure, data paths, and FSEvents-backed watching behind one trait."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+lume-core.workspace = true

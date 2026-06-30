@@ -1,0 +1,24 @@
+# All project documentation (design, build plan, glossary, ADRs) is local-only.
+docs/
+
+# Rust
+/target/
+
+# Tauri-generated (schemas/ACL regenerated from capabilities on build)
+src-tauri/gen/
+
+# Node / frontend
+node_modules/
+dist/
+
+# Python sidecar (uv-managed virtualenv; uv.lock IS committed)
+sidecar/.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+
+# macOS
+.DS_Store
+
+# Logs / local runtime
+*.log

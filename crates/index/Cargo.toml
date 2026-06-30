@@ -1,0 +1,11 @@
+[package]
+name = "lume-index"
+description = "L3 ingest: folder walk, basename-pairing (items not files), FSEvents watch, reconciliation, and the per-file change-detection state machine."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+lume-core.workspace = true

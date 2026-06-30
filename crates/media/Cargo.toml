@@ -1,0 +1,11 @@
+[package]
+name = "lume-media"
+description = "L3 media: FFmpeg scene-detection + bounded frame extraction, video poster harvest, and the lazy thumbnail/preview flow."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+lume-core.workspace = true

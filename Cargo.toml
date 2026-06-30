@@ -1,0 +1,45 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/store",
+    "crates/ipc",
+    "crates/index",
+    "crates/media",
+    "crates/platform",
+    "src-tauri",
+]
+
+# Dependencies flow strictly downward (DESIGN §19 / BUILD.md layer map):
+#   app → index/media → ipc → store → core
+# Each layer is its own crate so the direction is enforced by the compiler:
+# `core` literally cannot depend on `app`. Add a new member only when it owns
+# a real seam — no speculative crates (BUILD.md discipline checklist).
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.85"
+repository = "https://github.com/0xAysh/Lume"
+
+[workspace.dependencies]
+# Internal crates
+lume-core = { path = "crates/core" }
+lume-store = { path = "crates/store" }
+lume-ipc = { path = "crates/ipc" }
+lume-index = { path = "crates/index" }
+lume-media = { path = "crates/media" }
+lume-platform = { path = "crates/platform" }
+
+# Shared third-party
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+half = { version = "2", features = ["serde"] }
+tracing = "0.1"
+
+[profile.release]
+# Smaller, faster binaries for the shipped .app (DESIGN §20).
+lto = "thin"
+codegen-units = 1
