@@ -105,6 +105,31 @@ pub struct EmbedUnit {
     pub frame_ts: Option<f32>,
 }
 
+/// One embedded **Unit** ready to be committed to the vector store.
+///
+/// A batch of these is the transaction boundary for indexing: either every Unit
+/// in the batch is visible to search, or none is. That invariant belongs behind
+/// [`crate::VectorStore`], not in every caller.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EmbeddedUnit<'a> {
+    pub file: FileId,
+    pub frame_ts: Option<f32>,
+    pub emb: &'a Embedding,
+}
+
+/// Structured filters combined with semantic KNN (DESIGN §12).
+///
+/// These are pushed below the vector-store seam so the sqlite-vec adapter can
+/// join against metadata while searching. Filtering only after top-k would make
+/// date/type/folder filters amputate otherwise-good grids.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchFilters {
+    pub kind: Option<MediaKind>,
+    pub captured_after: Option<i64>,
+    pub captured_before: Option<i64>,
+    pub folder: Option<PathBuf>,
+}
+
 /// A scored **Unit** from a KNN query — one image Unit or one video frame.
 ///
 /// The result pipeline (DESIGN §12) collapses these by `file` into **Tiles**

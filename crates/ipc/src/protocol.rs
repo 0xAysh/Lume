@@ -75,3 +75,12 @@ pub struct EmbedOneRequest {
 pub struct EmbedOneResponse {
     pub emb_fp16: Vec<u8>,
 }
+
+/// Rust → Python: synchronous text-query embed for semantic search (§12).
+///
+/// The response reuses [`EmbedOneResponse`]: both interactive paths return one
+/// bare query vector and no thumbnail.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EmbedTextRequest {
+    pub text: String,
+}

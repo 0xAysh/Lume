@@ -20,3 +20,8 @@ def test_frame_embedding_matches_image_contract():
 def test_query_image_embedding_is_just_a_vector():
     emb = FakeEmbedder().embed_query_image(b"\xff\xd8\xff\xd9")
     assert len(emb) == FP16_BYTES
+
+
+def test_query_text_embedding_is_just_a_vector():
+    emb = FakeEmbedder().embed_query_text("girl riding a bicycle")
+    assert len(emb) == FP16_BYTES

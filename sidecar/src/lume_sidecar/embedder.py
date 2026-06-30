@@ -41,6 +41,14 @@ class Embedder(ABC):
     def embed_query_image(self, image_bytes: bytes) -> bytes:
         """Synchronous drag-in path: embed in-memory image bytes -> ``emb_fp16``."""
 
+    @abstractmethod
+    def embed_query_text(self, text: str) -> bytes:
+        """Synchronous search path: embed query text -> ``emb_fp16``.
+
+        The real adapter serves this from the resident text tower (DESIGN §11),
+        so search-after-idle stays instant while the vision tower can unload.
+        """
+
 
 class FakeEmbedder(Embedder):
     """Deterministic stand-in for tests — no torch, no GPU, no decode.
@@ -59,4 +67,7 @@ class FakeEmbedder(Embedder):
         return (bytes(FP16_BYTES), self._STUB_JPEG)
 
     def embed_query_image(self, image_bytes: bytes) -> bytes:
+        return bytes(FP16_BYTES)
+
+    def embed_query_text(self, text: str) -> bytes:
         return bytes(FP16_BYTES)

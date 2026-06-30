@@ -109,3 +109,45 @@ class EmbedResponse:
             batch_id=d["batch_id"],
             items=[BatchItem.from_dict(i) for i in d["items"]],
         )
+
+
+@dataclass
+class EmbedOneRequest:
+    """Synchronous drag-in image query. Response is one bare embedding vector."""
+
+    image_bytes: bytes
+
+    def to_dict(self) -> dict:
+        return {"image_bytes": list(self.image_bytes)}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> EmbedOneRequest:
+        return cls(image_bytes=bytes(d["image_bytes"]))
+
+
+@dataclass
+class EmbedOneResponse:
+    """One interactive query vector, shared by image and text query requests."""
+
+    emb_fp16: bytes
+
+    def to_dict(self) -> dict:
+        return {"emb_fp16": list(self.emb_fp16)}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> EmbedOneResponse:
+        return cls(emb_fp16=bytes(d["emb_fp16"]))
+
+
+@dataclass
+class EmbedTextRequest:
+    """Synchronous text-query embed for semantic search."""
+
+    text: str
+
+    def to_dict(self) -> dict:
+        return {"text": self.text}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> EmbedTextRequest:
+        return cls(text=d["text"])

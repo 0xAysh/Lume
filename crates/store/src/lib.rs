@@ -15,5 +15,5 @@
 
 // TODO(M0): pin the sqlite-vec version; prove float16[768] KNN reads 2-byte
 //           elements and stays correct under WAL while a batch is appended.
-// TODO(M1): implement VectorStore (insert/knn/delete_file) + MetadataStore
+// TODO(M1): implement VectorStore (insert_batch/filtered knn/delete_file) + MetadataStore
 //           (upsert/list) with migrations from day one.

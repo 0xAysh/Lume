@@ -16,6 +16,6 @@ pub use config::{Config, ExcludeRule, FolderConfig, ResultConfig, ThumbConfig, V
 pub use error::{ConfigError, LumeError};
 pub use traits::{EmbedOutcome, EventSink, FsEvent, Platform, Sidecar, ThermalLevel, VectorStore};
 pub use types::{
-    Blake3Hash, Dtype, EmbedUnit, Embedding, FileId, FileRecord, IndexState, MediaKind, OpenAction,
-    ScoredHit,
+    Blake3Hash, Dtype, EmbedUnit, EmbeddedUnit, Embedding, FileId, FileRecord, IndexState,
+    MediaKind, OpenAction, ScoredHit, SearchFilters,
 };

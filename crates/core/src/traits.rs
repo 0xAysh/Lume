@@ -14,21 +14,34 @@
 use std::path::PathBuf;
 
 use crate::error::LumeError;
-use crate::types::{EmbedUnit, Embedding, FileId, ScoredHit};
+use crate::types::{EmbedUnit, EmbeddedUnit, Embedding, FileId, ScoredHit, SearchFilters};
 
 /// L1 seam: exact brute-force KNN over fp16 vectors.
 ///
-/// The interface is deliberately tiny; all the sqlite-vec/WAL/single-writer
-/// machinery (DESIGN §10) lives *behind* it. Callers never see SQL.
+/// The interface is deliberately small but carries the load-bearing store
+/// obligations: batch commits are atomic, filtering is pushed into the metadata
+/// join, and all sqlite-vec/WAL/single-writer machinery (DESIGN §10) lives
+/// *behind* it. Callers never see SQL or transaction handles.
 pub trait VectorStore {
-    /// Insert one **Unit**'s embedding, keyed to its Item ([`FileId`]) and
-    /// frame timestamp (`None` for a whole image).
-    fn insert(&self, file: FileId, frame_ts: Option<f32>, emb: &Embedding)
-        -> Result<(), LumeError>;
+    /// Atomically insert one committed indexing batch.
+    ///
+    /// This is the transaction boundary from DESIGN §10. The Indexer hands over
+    /// a batch; the adapter owns WAL, busy timeouts, single-writer funneling,
+    /// and the exact commit point used for crash resume.
+    fn insert_batch(&self, units: &[EmbeddedUnit<'_>]) -> Result<(), LumeError>;
 
-    /// Exact k-nearest **Units**. Returns up to `k` [`ScoredHit`]s, best first.
-    /// Collapsing to Tiles happens above this seam (DESIGN §12).
-    fn knn(&self, query: &Embedding, k: usize) -> Result<Vec<ScoredHit>, LumeError>;
+    /// Exact k-nearest **Units**, with structured filters applied in-store.
+    ///
+    /// Returns up to `k` [`ScoredHit`]s, best first. Collapsing to Tiles happens
+    /// above this seam (DESIGN §12), but date/type/folder filters belong here so
+    /// the adapter can apply them before/with the KNN scan instead of trimming
+    /// an already-small top-k after the fact.
+    fn knn(
+        &self,
+        query: &Embedding,
+        k: usize,
+        filters: &SearchFilters,
+    ) -> Result<Vec<ScoredHit>, LumeError>;
 
     /// Remove every Unit belonging to an Item (e.g. file deleted).
     fn delete_file(&self, file: FileId) -> Result<(), LumeError>;
@@ -48,6 +61,13 @@ pub trait Sidecar {
     /// Distinct from the bulk [`Self::embed`] path; pays the vision-tower reload
     /// if it was unloaded on idle (§11).
     fn embed_one(&self, image: &[u8]) -> Result<Embedding, LumeError>;
+
+    /// Synchronous text-query embed for semantic search (DESIGN §12).
+    ///
+    /// This is the hottest interactive path and is served by the resident text
+    /// tower (§11). Like [`Self::embed_one`], it bypasses bulk indexing and
+    /// should be drained between image batches by the sidecar adapter.
+    fn embed_text(&self, query: &str) -> Result<Embedding, LumeError>;
 }
 
 /// Result of embedding one Unit. Success carries the vector *and* the grid
