@@ -129,6 +129,41 @@ fn embed_response_matches_shared_wire_fixture() {
 }
 
 #[test]
+fn binary_fields_serialize_as_base64_strings_not_int_arrays() {
+    // Transport depth (issue #17): emb_fp16 / thumb_jpeg / image_bytes must
+    // cross the wire as compact base64 strings, never as JSON integer arrays.
+    let ok = serde_json::to_string(&UnitResult::Ok {
+        emb_fp16: vec![1, 2, 3, 4],
+        thumb_jpeg: vec![0xFF, 0xD8, 0xFF],
+    })
+    .unwrap();
+    assert!(
+        ok.contains(r#""emb_fp16":"AQIDBA==""#),
+        "emb_fp16 must be a base64 string, got {ok}"
+    );
+    assert!(
+        ok.contains(r#""thumb_jpeg":"/9j/""#),
+        "thumb_jpeg must be a base64 string, got {ok}"
+    );
+
+    let req = serde_json::to_string(&EmbedOneRequest {
+        image_bytes: vec![0xFF, 0xD8, 0xFF],
+    })
+    .unwrap();
+    assert_eq!(req, r#"{"image_bytes":"/9j/"}"#);
+    assert!(
+        !req.contains('['),
+        "image_bytes must not serialize as an int array, got {req}"
+    );
+
+    let resp = serde_json::to_string(&EmbedOneResponse {
+        emb_fp16: vec![9, 9],
+    })
+    .unwrap();
+    assert_eq!(resp, r#"{"emb_fp16":"CQk="}"#);
+}
+
+#[test]
 fn embed_one_round_trips() {
     let req = EmbedOneRequest {
         image_bytes: vec![0xFF, 0xD8, 0xFF],

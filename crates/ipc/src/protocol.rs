@@ -17,6 +17,29 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Base64 ⇄ `Vec<u8>` serde adapter — the *one* place binary payload encoding
+/// lives on the Rust side of the seam (issue #17, M2 transport depth).
+///
+/// DTO fields keep their `Vec<u8>` type so callers still see ordinary bytes,
+/// but they cross the wire as compact base64 strings instead of JSON integer
+/// arrays. Framing stays length-prefixed JSON, so frames remain inspectable.
+mod b64 {
+    use base64::engine::general_purpose::STANDARD;
+    use base64::Engine as _;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&STANDARD.encode(bytes))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+        let encoded = String::deserialize(deserializer)?;
+        STANDARD
+            .decode(encoded.as_bytes())
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 /// One request frame from Rust to Python.
 ///
 /// The tag is the socket-level operation name. Keeping this envelope explicit
@@ -66,9 +89,11 @@ pub struct EmbedRequest {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum UnitResult {
     Ok {
-        /// 768 little-endian fp16 elements = 1536 bytes.
+        /// 768 little-endian fp16 elements = 1536 bytes. Base64 on the wire.
+        #[serde(with = "b64")]
         emb_fp16: Vec<u8>,
-        /// Grid thumbnail, JPEG-encoded (DESIGN §8).
+        /// Grid thumbnail, JPEG-encoded (DESIGN §8). Base64 on the wire.
+        #[serde(with = "b64")]
         thumb_jpeg: Vec<u8>,
     },
     Failed {
@@ -93,12 +118,14 @@ pub struct BatchItem {
 /// Rust → Python: synchronous single-image embed for drag-in queries (§12, M4).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EmbedOneRequest {
+    #[serde(with = "b64")]
     pub image_bytes: Vec<u8>,
 }
 
 /// Python → Rust: the drag-in query vector.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EmbedOneResponse {
+    #[serde(with = "b64")]
     pub emb_fp16: Vec<u8>,
 }
 

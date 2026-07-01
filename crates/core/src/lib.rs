@@ -9,11 +9,13 @@
 
 pub mod config;
 pub mod error;
+pub mod rank;
 pub mod traits;
 pub mod types;
 
 pub use config::{Config, ExcludeRule, FolderConfig, ResultConfig, ThumbConfig, VideoConfig};
 pub use error::{ConfigError, LumeError};
+pub use rank::{rank_tiles, Cliff, RankedTiles, Tile, TileMeta};
 pub use traits::{EmbedOutcome, EventSink, FsEvent, Platform, Sidecar, ThermalLevel, VectorStore};
 pub use types::{
     Blake3Hash, Dtype, EmbedUnit, EmbeddedUnit, Embedding, FileId, FileRecord, IndexState,

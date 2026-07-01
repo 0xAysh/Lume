@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 lume-core.workspace = true
+base64.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 half.workspace = true

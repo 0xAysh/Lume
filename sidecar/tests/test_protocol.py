@@ -97,6 +97,23 @@ def test_embed_response_matches_shared_wire_fixture():
     assert EmbedResponse.from_dict(json.loads(_fixture("embed_response_ok_failed"))) == resp
 
 
+def test_binary_fields_serialize_as_base64_strings_not_int_arrays():
+    # Transport depth (issue #17): emb_fp16 / thumb_jpeg / image_bytes must
+    # cross the wire as compact base64 strings, never as JSON integer arrays.
+    ok = UnitOk(emb_fp16=b"\x01\x02\x03\x04", thumb_jpeg=b"\xff\xd8\xff")
+    d = BatchItem(unit_idx=0, result=ok).to_dict()["result"]["Ok"]
+    assert d["emb_fp16"] == "AQIDBA=="
+    assert d["thumb_jpeg"] == "/9j/"
+
+    req = EmbedOneRequest(image_bytes=b"\xff\xd8\xff").to_dict()
+    assert req == {"image_bytes": "/9j/"}
+    assert isinstance(req["image_bytes"], str)
+
+    resp = EmbedOneResponse(emb_fp16=b"\x09\x09").to_dict()
+    assert resp == {"emb_fp16": "CQk="}
+    assert isinstance(resp["emb_fp16"], str)
+
+
 def test_embed_one_round_trips():
     req = EmbedOneRequest(image_bytes=b"\xff\xd8\xff")
     resp = EmbedOneResponse(emb_fp16=b"\x09\x09")

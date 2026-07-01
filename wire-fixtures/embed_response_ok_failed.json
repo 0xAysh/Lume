@@ -1,1 +1,1 @@
-{"batch_id":7,"items":[{"unit_idx":0,"result":{"Ok":{"emb_fp16":[1,2,3,4],"thumb_jpeg":[255,216,255]}}},{"unit_idx":1,"result":{"Failed":{"reason":"unsupported codec"}}}]}
+{"batch_id":7,"items":[{"unit_idx":0,"result":{"Ok":{"emb_fp16":"AQIDBA==","thumb_jpeg":"/9j/"}}},{"unit_idx":1,"result":{"Failed":{"reason":"unsupported codec"}}}]}
