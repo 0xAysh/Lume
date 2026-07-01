@@ -17,6 +17,28 @@
 
 use serde::{Deserialize, Serialize};
 
+/// One request frame from Rust to Python.
+///
+/// The tag is the socket-level operation name. Keeping this envelope explicit
+/// lets the Sidecar server multiplex bulk indexing, drag-in image queries, and
+/// text queries on one length-prefixed transport without leaking model details.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "payload", rename_all = "snake_case")]
+pub enum ClientMessage {
+    Embed(EmbedRequest),
+    EmbedOne(EmbedOneRequest),
+    EmbedText(EmbedTextRequest),
+}
+
+/// One response frame from Python to Rust.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "payload", rename_all = "snake_case")]
+pub enum ServerMessage {
+    EmbedResponse(EmbedResponse),
+    EmbedOneResponse(EmbedOneResponse),
+    Error { message: String },
+}
+
 /// One Unit to embed in a batch request.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RequestUnit {

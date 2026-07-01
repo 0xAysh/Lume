@@ -51,3 +51,8 @@ export function startIndex(): Promise<void> {
 export function indexStatus(): Promise<IndexStatus> {
   return invoke<IndexStatus>("index_status");
 }
+
+/** M0 heartbeat: spawned Sidecar text query -> 768-dim Embedding. */
+export function m0SidecarHeartbeat(): Promise<number> {
+  return invoke<number>("m0_sidecar_heartbeat");
+}

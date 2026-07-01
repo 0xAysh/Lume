@@ -1691,6 +1691,7 @@ name = "lume-app"
 version = "0.0.0"
 dependencies = [
  "lume-core",
+ "lume-ipc",
  "serde",
  "serde_json",
  "tauri",
@@ -1719,6 +1720,7 @@ dependencies = [
 name = "lume-ipc"
 version = "0.0.0"
 dependencies = [
+ "half",
  "lume-core",
  "serde",
  "serde_json",
