@@ -3,13 +3,13 @@ name = "lume-sidecar"
 version = "0.0.0"
 description = "Lume's inference black box: decode + preprocess + SigLIP 2 embedding over a Unix socket (DESIGN §6, §9)."
 requires-python = ">=3.11"
-# Runtime deps (torch, transformers, pillow-heif, rawpy) are intentionally NOT
-# pinned yet — they land with the M0 spike, which proves SigLIP 2 Base on MPS
-# inside a signed bundle (BUILD.md M0). The scaffold tests run without them.
+# Normal tests run without ML deps. The `m0` dependency group carries the
+# heavyweight SigLIP/MPS proof deps; production runtime pins land with packaging.
 dependencies = []
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.6"]
+m0 = ["numpy>=2", "pillow>=11", "torch>=2.7", "torchvision>=0.22", "transformers>=4.53"]
 
 [build-system]
 requires = ["hatchling"]

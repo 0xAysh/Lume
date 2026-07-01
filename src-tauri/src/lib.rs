@@ -9,7 +9,18 @@
 //! The DTOs are webview-facing (camelCase JSON) and mirror `src/lib/commands.ts`.
 //! Keep the two in lockstep.
 
+use std::path::PathBuf;
+use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
+
+use lume_core::Sidecar;
+use lume_ipc::SocketSidecar;
 use serde::{Deserialize, Serialize};
+use tauri::Manager;
+
+const M0_SOCKET_PATH: &str = "/tmp/lume-m0-sidecar.sock";
+
+struct SidecarChild(Mutex<Option<Child>>);
 
 /// One result Tile (DESIGN §12). Deduplicated from Units before it crosses here.
 #[derive(Debug, Clone, Serialize)]
@@ -93,11 +104,71 @@ fn index_status() -> IndexStatus {
     }
 }
 
+/// M0 heartbeat: prove Rust can connect to the spawned Sidecar and get a vector.
+#[tauri::command]
+fn m0_sidecar_heartbeat() -> Result<usize, String> {
+    SocketSidecar::new(M0_SOCKET_PATH)
+        .embed_text("girl riding a bicycle")
+        .map(|emb| emb.dim())
+        .map_err(|err| err.to_string())
+}
+
 /// Build and run the Tauri application. Called by `main.rs`.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![search, start_index, index_status])
+        .setup(|app| {
+            app.manage(SidecarChild(Mutex::new(spawn_m0_sidecar())));
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            search,
+            start_index,
+            index_status,
+            m0_sidecar_heartbeat
+        ])
         .run(tauri::generate_context!())
         .expect("error while running Lume");
+}
+
+fn spawn_m0_sidecar() -> Option<Child> {
+    if std::env::var_os("LUME_DISABLE_M0_SIDECAR").is_some() {
+        return None;
+    }
+
+    let sidecar_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("src-tauri has a workspace parent")
+        .join("sidecar");
+    let child = Command::new("uv")
+        .args([
+            "run",
+            "python",
+            "-m",
+            "lume_sidecar.server",
+            "--socket",
+            M0_SOCKET_PATH,
+        ])
+        .current_dir(sidecar_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+
+    match child {
+        Ok(child) => Some(child),
+        Err(err) => {
+            eprintln!("M0 Sidecar spawn skipped: {err}");
+            None
+        }
+    }
+}
+
+impl Drop for SidecarChild {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.0.lock().expect("sidecar child lock poisoned").take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
 }
