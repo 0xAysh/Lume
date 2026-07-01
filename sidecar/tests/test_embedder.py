@@ -6,13 +6,13 @@ from lume_sidecar.embedder import FP16_BYTES, FakeEmbedder
 
 
 def test_image_embedding_has_fp16_dim_and_a_thumbnail():
-    emb, thumb = FakeEmbedder().embed_image("/any/photo.jpg")
+    emb, thumb = FakeEmbedder().embed_image("/any/photo.jpg", thumb_px=400)
     assert len(emb) == FP16_BYTES  # 768 * 2 bytes
     assert thumb[:2] == b"\xff\xd8"  # JPEG SOI marker
 
 
 def test_frame_embedding_matches_image_contract():
-    emb, thumb = FakeEmbedder().embed_frame("/any/clip.mov", frame_ts=4.0)
+    emb, thumb = FakeEmbedder().embed_frame("/any/clip.mov", frame_ts=4.0, thumb_px=400)
     assert len(emb) == FP16_BYTES
     assert thumb[:2] == b"\xff\xd8"
 

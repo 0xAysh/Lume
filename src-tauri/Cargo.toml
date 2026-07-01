@@ -19,10 +19,13 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 lume-core.workspace = true
 lume-ipc.workspace = true
+lume-store.workspace = true
+lume-index.workspace = true
+half.workspace = true
 tauri = { version = "2", features = [] }
 serde.workspace = true
 serde_json.workspace = true
 tracing = { workspace = true }
 
-# TODO(M1): depend on lume-store / lume-index as the commands get wired to the
-#           real engine. `lume-ipc` is present now for the M0 Sidecar heartbeat.
+[dev-dependencies]
+tempfile = "3"

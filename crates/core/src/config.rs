@@ -111,7 +111,10 @@ impl Default for Config {
         Config {
             watched_folders: Vec::new(),
             model_name: "google/siglip2-base-patch16-224".to_string(),
-            vector_dtype: Dtype::F16,
+            // float32 in the vec0 table (ADR-0003) — sqlite-vec has no float16
+            // element type. The wire embedding stays fp16 (crates/ipc); only the
+            // stored dtype flips.
+            vector_dtype: Dtype::F32,
             batch_size: 32,
             video: VideoConfig {
                 scene_threshold: 0.4,

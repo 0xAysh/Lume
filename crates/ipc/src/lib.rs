@@ -71,12 +71,16 @@ where
 #[derive(Clone, Debug)]
 pub struct SocketSidecar {
     socket_path: PathBuf,
+    /// Stored grid-thumbnail edge, px (`Config.thumbnails.grid_px`), sent on
+    /// every `Embed` request. Read from `Config` once at construction.
+    thumb_px: u32,
 }
 
 impl SocketSidecar {
-    pub fn new(socket_path: impl Into<PathBuf>) -> Self {
+    pub fn new(socket_path: impl Into<PathBuf>, thumb_px: u32) -> Self {
         Self {
             socket_path: socket_path.into(),
+            thumb_px,
         }
     }
 
@@ -91,6 +95,7 @@ impl SidecarTrait for SocketSidecar {
     fn embed(&self, units: &[EmbedUnit]) -> Result<Vec<EmbedOutcome>, LumeError> {
         let req = EmbedRequest {
             batch_id: 0,
+            thumb_px: self.thumb_px,
             units: units
                 .iter()
                 .enumerate()

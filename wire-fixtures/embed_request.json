@@ -1,1 +1,1 @@
-{"batch_id":7,"units":[{"unit_idx":0,"path":"/a/photo.jpg"},{"unit_idx":1,"path":"/a/clip.mov","frame_ts":12.5}]}
+{"batch_id":7,"thumb_px":400,"units":[{"unit_idx":0,"path":"/a/photo.jpg"},{"unit_idx":1,"path":"/a/clip.mov","frame_ts":12.5}]}

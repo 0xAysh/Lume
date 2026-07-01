@@ -38,15 +38,23 @@ class RequestUnit:
 @dataclass
 class EmbedRequest:
     batch_id: int
+    #: Stored grid-thumbnail edge, px (`Config.thumbnails.grid_px`). A
+    #: legitimate batch-level parameter, not a model/device/framework leak.
+    thumb_px: int
     units: list[RequestUnit] = field(default_factory=list)
 
     def to_dict(self) -> dict:
-        return {"batch_id": self.batch_id, "units": [u.to_dict() for u in self.units]}
+        return {
+            "batch_id": self.batch_id,
+            "thumb_px": self.thumb_px,
+            "units": [u.to_dict() for u in self.units],
+        }
 
     @classmethod
     def from_dict(cls, d: dict) -> EmbedRequest:
         return cls(
             batch_id=d["batch_id"],
+            thumb_px=d["thumb_px"],
             units=[RequestUnit.from_dict(u) for u in d["units"]],
         )
 

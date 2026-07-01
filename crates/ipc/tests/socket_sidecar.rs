@@ -50,7 +50,7 @@ fn socket_sidecar_embeds_text_over_unix_socket() {
         .unwrap();
     });
 
-    let emb = SocketSidecar::new(socket.clone())
+    let emb = SocketSidecar::new(socket.clone(), 400)
         .embed_text("girl riding a bicycle")
         .unwrap();
 
@@ -91,7 +91,7 @@ fn socket_sidecar_realigns_batch_results_by_unit_index() {
         .unwrap();
     });
 
-    let outcomes = SocketSidecar::new(socket.clone())
+    let outcomes = SocketSidecar::new(socket.clone(), 400)
         .embed(&[
             EmbedUnit {
                 file: 10,

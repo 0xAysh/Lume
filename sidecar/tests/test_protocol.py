@@ -36,6 +36,7 @@ def _fixture(name: str) -> str:
 def test_embed_request_round_trips():
     req = EmbedRequest(
         batch_id=7,
+        thumb_px=400,
         units=[
             RequestUnit(unit_idx=0, path="/a/photo.jpg"),
             RequestUnit(unit_idx=1, path="/a/clip.mov", frame_ts=12.5),
@@ -48,6 +49,7 @@ def test_embed_request_round_trips():
 def test_embed_request_matches_shared_wire_fixture():
     req = EmbedRequest(
         batch_id=7,
+        thumb_px=400,
         units=[
             RequestUnit(unit_idx=0, path="/a/photo.jpg"),
             RequestUnit(unit_idx=1, path="/a/clip.mov", frame_ts=12.5),

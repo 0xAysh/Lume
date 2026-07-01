@@ -26,6 +26,7 @@ fn fixture(name: &str) -> &'static str {
 fn embed_request_round_trips() {
     let req = EmbedRequest {
         batch_id: 7,
+        thumb_px: 400,
         units: vec![
             RequestUnit {
                 unit_idx: 0,
@@ -47,6 +48,7 @@ fn embed_request_round_trips() {
 fn embed_request_matches_shared_wire_fixture() {
     let req = EmbedRequest {
         batch_id: 7,
+        thumb_px: 400,
         units: vec![
             RequestUnit {
                 unit_idx: 0,

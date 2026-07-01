@@ -9,3 +9,10 @@ repository.workspace = true
 
 [dependencies]
 lume-core.workspace = true
+lume-store.workspace = true
+tracing.workspace = true
+walkdir = "2"
+
+[dev-dependencies]
+tempfile = "3"
+half.workspace = true
