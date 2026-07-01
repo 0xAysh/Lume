@@ -27,6 +27,8 @@
 //! the thumbnail path guard all reappear scattered across `run`, the protocol
 //! closure, and three command handlers.
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -38,7 +40,7 @@ use lume_index::{Indexer, Progress};
 use lume_ipc::SocketSidecar;
 use lume_store::SqliteStore;
 
-const SIDECAR_SOCKET_PATH: &str = "/tmp/lume-sidecar.sock";
+const SIDECAR_SOCKET_NAME: &str = "sidecar.sock";
 
 /// The composition root's live state: the real L1/L2 adapters, the one M1 watched
 /// folder, whatever indexing run is in flight, and the owned sidecar child. This
@@ -93,17 +95,15 @@ impl AppRuntime {
     /// root — the one place adapter wiring lives.
     pub fn bootstrap() -> Self {
         let data_dir = lume_data_dir();
-        std::fs::create_dir_all(&data_dir).expect("create ~/.lume");
+        ensure_private_dir(&data_dir).expect("create private ~/.lume");
         let thumbnails_dir = data_dir.join("thumbnails");
-        std::fs::create_dir_all(&thumbnails_dir).expect("create ~/.lume/thumbnails");
+        ensure_private_dir(&thumbnails_dir).expect("create private ~/.lume/thumbnails");
+        let socket_path = sidecar_socket_path(&data_dir);
 
         let config = Config::default();
         let store =
             Arc::new(SqliteStore::open(data_dir.join("lume.sqlite3")).expect("open SqliteStore"));
-        let sidecar = Arc::new(SocketSidecar::new(
-            SIDECAR_SOCKET_PATH,
-            config.thumbnails.grid_px,
-        ));
+        let sidecar = Arc::new(SocketSidecar::new(&socket_path, config.thumbnails.grid_px));
 
         AppRuntime {
             store,
@@ -112,7 +112,7 @@ impl AppRuntime {
             config,
             thumbnails_dir,
             current_run: Mutex::new(None),
-            _sidecar_child: SidecarChild(Mutex::new(spawn_sidecar())),
+            _sidecar_child: SidecarChild(Mutex::new(spawn_sidecar(&socket_path))),
         }
     }
 
@@ -271,6 +271,17 @@ fn lume_data_dir() -> PathBuf {
     home_dir().join(".lume")
 }
 
+fn ensure_private_dir(path: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(path)?;
+    #[cfg(unix)]
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
+    Ok(())
+}
+
+fn sidecar_socket_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(SIDECAR_SOCKET_NAME)
+}
+
 /// M1's stand-in for Settings-driven folder configuration (M6): one watched
 /// folder from `LUME_WATCH_FOLDER`, defaulting to `~/Pictures`.
 fn watch_folder_from_env() -> PathBuf {
@@ -280,7 +291,7 @@ fn watch_folder_from_env() -> PathBuf {
     }
 }
 
-fn spawn_sidecar() -> Option<Child> {
+fn spawn_sidecar(socket_path: &Path) -> Option<Child> {
     if std::env::var_os("LUME_DISABLE_SIDECAR").is_some() {
         return None;
     }
@@ -295,7 +306,7 @@ fn spawn_sidecar() -> Option<Child> {
         "-m".to_string(),
         "lume_sidecar.server".to_string(),
         "--socket".to_string(),
-        SIDECAR_SOCKET_PATH.to_string(),
+        socket_path.to_string_lossy().into_owned(),
     ];
     if std::env::var_os("LUME_SIDECAR_FAKE_EMBEDDER").is_some() {
         args.push("--fake".to_string());
@@ -319,7 +330,11 @@ fn spawn_sidecar() -> Option<Child> {
 
 #[cfg(test)]
 mod tests {
-    use super::{derive_phase, normalize_query, resolve_thumbnail, RunPhase};
+    use super::{
+        derive_phase, ensure_private_dir, normalize_query, resolve_thumbnail, sidecar_socket_path,
+        RunPhase,
+    };
+    use std::os::unix::fs::PermissionsExt;
 
     fn request(uri: &str) -> tauri::http::Request<Vec<u8>> {
         tauri::http::Request::builder()
@@ -370,6 +385,22 @@ mod tests {
             "girl riding a bicycle"
         );
         assert_eq!(normalize_query("\n\tSUNSET\t\n"), "sunset");
+    }
+
+    #[test]
+    fn sidecar_socket_lives_inside_private_lume_data_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = dir.path().join(".lume");
+
+        ensure_private_dir(&data_dir).unwrap();
+        let socket = sidecar_socket_path(&data_dir);
+
+        assert!(socket.starts_with(&data_dir));
+        assert_ne!(socket, std::path::PathBuf::from("/tmp/lume-sidecar.sock"));
+        assert_eq!(
+            std::fs::metadata(&data_dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
     }
 
     #[test]

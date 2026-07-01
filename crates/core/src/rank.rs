@@ -150,7 +150,7 @@ fn detect_cliff(tiles: &[Tile], min_gap: f32) -> Option<Cliff> {
     let mut best: Option<Cliff> = None;
     for i in 0..tiles.len().saturating_sub(1) {
         let gap = tiles[i].score - tiles[i + 1].score;
-        if gap >= min_gap && best.map_or(true, |b| gap > b.gap) {
+        if gap >= min_gap && best.is_none_or(|b| gap > b.gap) {
             best = Some(Cliff { above: i + 1, gap });
         }
     }
