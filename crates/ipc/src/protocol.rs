@@ -55,6 +55,10 @@ pub struct RequestUnit {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EmbedRequest {
     pub batch_id: u64,
+    /// Stored grid-thumbnail edge, px (`Config.thumbnails.grid_px`). A
+    /// legitimate batch-level parameter, not a model/device/framework leak
+    /// (DESIGN §19) — the sidecar still owns all decode/resize knowledge.
+    pub thumb_px: u32,
     pub units: Vec<RequestUnit>,
 }
 

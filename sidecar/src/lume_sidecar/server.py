@@ -1,4 +1,6 @@
-"""Unix-socket Sidecar server for the M0 spine heartbeat."""
+"""Unix-socket Sidecar server: multiplexes bulk/embed-one/embed-text requests
+onto the real `SiglipEmbedder` by default, with a `--fake` override for tests
+(DESIGN §9, §19; BUILD.md M1 Slice 2)."""
 
 from __future__ import annotations
 
@@ -8,7 +10,7 @@ import socket
 from pathlib import Path
 from typing import Any
 
-from lume_sidecar.embedder import Embedder, FakeEmbedder
+from lume_sidecar.embedder import Embedder, FakeEmbedder, SiglipEmbedder
 from lume_sidecar.framing import read_frame, write_frame
 from lume_sidecar.protocol import (
     BatchItem,
@@ -33,9 +35,9 @@ def handle_message(message: dict[str, Any], embedder: Embedder | None = None) ->
         for unit in req.units:
             try:
                 if unit.frame_ts is None:
-                    emb, thumb = embedder.embed_image(unit.path)
+                    emb, thumb = embedder.embed_image(unit.path, req.thumb_px)
                 else:
-                    emb, thumb = embedder.embed_frame(unit.path, unit.frame_ts)
+                    emb, thumb = embedder.embed_frame(unit.path, unit.frame_ts, req.thumb_px)
                 result = UnitOk(emb_fp16=emb, thumb_jpeg=thumb)
             except Exception as exc:  # noqa: BLE001 - in-band per-Unit failure by design.
                 result = UnitFailed(reason=str(exc))
@@ -88,8 +90,21 @@ def serve(socket_path: Path, embedder: Embedder | None = None) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the Lume Sidecar socket server.")
     parser.add_argument("--socket", required=True, type=Path)
+    parser.add_argument("--model", default="google/siglip2-base-patch16-224")
+    parser.add_argument(
+        "--fake",
+        action="store_true",
+        help="Use FakeEmbedder instead of loading real SigLIP weights "
+        "(fast startup, no GPU/model download — used by tests).",
+    )
     args = parser.parse_args()
-    serve(args.socket)
+
+    if args.fake or os.environ.get("LUME_SIDECAR_FAKE_EMBEDDER"):
+        embedder: Embedder = FakeEmbedder()
+    else:
+        embedder = SiglipEmbedder(args.model)
+
+    serve(args.socket, embedder)
 
 
 if __name__ == "__main__":

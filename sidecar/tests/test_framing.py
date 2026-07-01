@@ -34,6 +34,7 @@ def test_fake_sidecar_handles_batch_and_preserves_unit_indices():
             "type": "embed",
             "payload": {
                 "batch_id": 7,
+                "thumb_px": 400,
                 "units": [
                     {"unit_idx": 1, "path": "/tmp/a.jpg"},
                     {"unit_idx": 3, "path": "/tmp/b.mov", "frame_ts": 4.0},
