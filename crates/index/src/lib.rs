@@ -16,6 +16,7 @@
 //! the two seams that matter (workspace dependency direction: `app → index →
 //! ipc → store → core`).
 
+mod commit;
 mod progress;
 mod walk;
 
@@ -23,12 +24,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
-use lume_core::{
-    EmbedOutcome, EmbedUnit, EmbeddedUnit, Embedding, FileId, IndexState, LumeError, MediaKind,
-    Sidecar, VectorStore,
-};
+use lume_core::{EmbedUnit, LumeError, MediaKind, Sidecar};
 use lume_store::SqliteStore;
 
+pub use commit::BatchCommitter;
 pub use progress::Progress;
 pub use walk::walk_folder;
 
@@ -112,53 +111,17 @@ impl Indexer {
             .collect();
 
         let outcomes = self.sidecar.embed(&units)?;
-        self.commit_outcomes(&file_ids, outcomes)
-    }
 
-    /// Writes thumbnails and marks per-file state; batches every successful
-    /// embedding from this chunk into one [`VectorStore::insert_batch`] call
-    /// so the chunk's Units become visible to search atomically.
-    fn commit_outcomes(
-        &self,
-        file_ids: &[FileId],
-        outcomes: Vec<EmbedOutcome>,
-    ) -> Result<(), LumeError> {
-        let mut embedded: Vec<(FileId, Embedding)> = Vec::new();
-
-        for (&file_id, outcome) in file_ids.iter().zip(outcomes) {
-            match outcome {
-                EmbedOutcome::Ok {
-                    emb,
-                    thumbnail_jpeg,
-                } => {
-                    let thumb_path = self.thumbnails_dir.join(format!("{file_id}.jpg"));
-                    std::fs::write(&thumb_path, &thumbnail_jpeg)?;
-                    embedded.push((file_id, emb));
-                }
-                EmbedOutcome::Failed { reason } => {
-                    tracing::warn!(file_id, %reason, "embedding failed, marking file Failed");
-                    self.store
-                        .set_file_state(file_id, IndexState::Failed, None)?;
-                }
-            }
-        }
-
-        if !embedded.is_empty() {
-            let units: Vec<EmbeddedUnit<'_>> = embedded
-                .iter()
-                .map(|(file, emb)| EmbeddedUnit {
-                    file: *file,
-                    frame_ts: None,
-                    emb,
-                })
-                .collect();
-            self.store.insert_batch(&units)?;
-            for (file_id, _) in &embedded {
-                self.store
-                    .set_file_state(*file_id, IndexState::Done, None)?;
-            }
-        }
-
-        Ok(())
+        // Delegate the whole "embedded Item becomes visible" transaction —
+        // thumbnails, the atomic Unit insert, and per-Item state — to the one
+        // module that owns those commit semantics (see [`commit`]). The store
+        // plays both roles: the `VectorStore` seam for the atomic insert and
+        // the concrete metadata helper for state.
+        BatchCommitter::new(
+            &self.thumbnails_dir,
+            self.store.as_ref(),
+            self.store.as_ref(),
+        )
+        .commit(&file_ids, outcomes)
     }
 }

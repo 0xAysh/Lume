@@ -8,9 +8,11 @@
 //! The wire contract is scaffolded now because it is one of the two seams that
 //! "must be correct from commit one" (BUILD.md). The transport is not.
 
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use half::f16;
 use lume_core::{EmbedOutcome, EmbedUnit, Embedding, LumeError, Sidecar as SidecarTrait};
@@ -24,6 +26,8 @@ use crate::protocol::{
 pub mod protocol;
 
 const MAX_FRAME_BYTES: usize = 32 * 1024 * 1024;
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const CONNECT_RETRY_DELAY: Duration = Duration::from_millis(25);
 
 /// Write one length-prefixed JSON frame.
 ///
@@ -85,9 +89,27 @@ impl SocketSidecar {
     }
 
     fn request(&self, message: &ClientMessage) -> Result<ServerMessage, LumeError> {
-        let mut stream = UnixStream::connect(&self.socket_path)?;
+        let mut stream = self.connect()?;
         write_frame(&mut stream, message)?;
         read_frame(&mut stream)
+    }
+
+    fn connect(&self) -> Result<UnixStream, LumeError> {
+        let deadline = Instant::now() + CONNECT_TIMEOUT;
+        loop {
+            match UnixStream::connect(&self.socket_path) {
+                Ok(stream) => return Ok(stream),
+                Err(err)
+                    if matches!(
+                        err.kind(),
+                        ErrorKind::NotFound | ErrorKind::ConnectionRefused
+                    ) && Instant::now() < deadline =>
+                {
+                    thread::sleep(CONNECT_RETRY_DELAY);
+                }
+                Err(err) => return Err(err.into()),
+            }
+        }
     }
 }
 

@@ -2,6 +2,7 @@ use std::io::Read;
 use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
 use std::thread;
+use std::time::Duration;
 
 use half::f16;
 use lume_core::{EmbedUnit, Embedding, Sidecar};
@@ -55,6 +56,34 @@ fn socket_sidecar_embeds_text_over_unix_socket() {
         .unwrap();
 
     assert_eq!(emb, Embedding(vec![f16::from_f32(1.0), f16::from_f32(2.0)]));
+    server.join().unwrap();
+    let _ = std::fs::remove_file(socket);
+}
+
+#[test]
+fn socket_sidecar_waits_for_the_server_to_bind() {
+    let socket = temp_socket("startup-race");
+    let server_socket = socket.clone();
+    let server = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(75));
+        let listener = UnixListener::bind(&server_socket).unwrap();
+        let (mut stream, _) = listener.accept().unwrap();
+        let _: lume_ipc::protocol::ClientMessage = read_frame(&mut stream).unwrap();
+
+        write_frame(
+            &mut stream,
+            &ServerMessage::EmbedOneResponse(EmbedOneResponse {
+                emb_fp16: vec![0, 60],
+            }),
+        )
+        .unwrap();
+    });
+
+    let emb = SocketSidecar::new(socket.clone(), 400)
+        .embed_text("startup race")
+        .unwrap();
+
+    assert_eq!(emb, Embedding(vec![f16::from_f32(1.0)]));
     server.join().unwrap();
     let _ = std::fs::remove_file(socket);
 }

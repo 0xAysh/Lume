@@ -13,7 +13,21 @@ JSON header + binary payload vs. msgpack) is finalized when the transport lands
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass, field
+
+
+def _b64_encode(raw: bytes) -> str:
+    """Encode binary payload for the wire — the one place base64 lives on the
+    Python side of the seam (issue #17, M2 transport depth). Mirrors the Rust
+    ``b64`` serde adapter so ``emb_fp16`` / ``thumb_jpeg`` / ``image_bytes``
+    cross as compact base64 strings, never JSON integer arrays."""
+    return base64.b64encode(raw).decode("ascii")
+
+
+def _b64_decode(encoded: str) -> bytes:
+    """Inverse of :func:`_b64_encode`."""
+    return base64.b64decode(encoded)
 
 
 @dataclass
@@ -79,14 +93,22 @@ UnitResult = UnitOk | UnitFailed
 
 def _unit_result_to_dict(r: UnitResult) -> dict:
     if isinstance(r, UnitOk):
-        return {"Ok": {"emb_fp16": list(r.emb_fp16), "thumb_jpeg": list(r.thumb_jpeg)}}
+        return {
+            "Ok": {
+                "emb_fp16": _b64_encode(r.emb_fp16),
+                "thumb_jpeg": _b64_encode(r.thumb_jpeg),
+            }
+        }
     return {"Failed": {"reason": r.reason}}
 
 
 def _unit_result_from_dict(d: dict) -> UnitResult:
     if "Ok" in d:
         ok = d["Ok"]
-        return UnitOk(emb_fp16=bytes(ok["emb_fp16"]), thumb_jpeg=bytes(ok["thumb_jpeg"]))
+        return UnitOk(
+            emb_fp16=_b64_decode(ok["emb_fp16"]),
+            thumb_jpeg=_b64_decode(ok["thumb_jpeg"]),
+        )
     return UnitFailed(reason=d["Failed"]["reason"])
 
 
@@ -126,11 +148,11 @@ class EmbedOneRequest:
     image_bytes: bytes
 
     def to_dict(self) -> dict:
-        return {"image_bytes": list(self.image_bytes)}
+        return {"image_bytes": _b64_encode(self.image_bytes)}
 
     @classmethod
     def from_dict(cls, d: dict) -> EmbedOneRequest:
-        return cls(image_bytes=bytes(d["image_bytes"]))
+        return cls(image_bytes=_b64_decode(d["image_bytes"]))
 
 
 @dataclass
@@ -140,11 +162,11 @@ class EmbedOneResponse:
     emb_fp16: bytes
 
     def to_dict(self) -> dict:
-        return {"emb_fp16": list(self.emb_fp16)}
+        return {"emb_fp16": _b64_encode(self.emb_fp16)}
 
     @classmethod
     def from_dict(cls, d: dict) -> EmbedOneResponse:
-        return cls(emb_fp16=bytes(d["emb_fp16"]))
+        return cls(emb_fp16=_b64_decode(d["emb_fp16"]))
 
 
 @dataclass
