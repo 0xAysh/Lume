@@ -14,9 +14,9 @@ React/Vite UI and a Python sidecar running SigLIP 2 for embeddings. Vectors
 are stored and searched with `sqlite-vec` using exact (brute-force) k-NN —
 no approximate-search accuracy loss at this scale.
 
-> **Status:** pre-alpha. The M1 walking skeleton and M2 ingest-depth slices
-> through Sidecar batching are implemented locally, but the app is not yet
-> packaged or ready for daily use.
+> **Status:** pre-alpha. The M1 walking skeleton, native macOS smoke harness,
+> and M2 ingest-depth slices through Sidecar batching are implemented on
+> `main`, but the app is not yet packaged or ready for daily use.
 
 ---
 
@@ -124,13 +124,16 @@ npm run test:macos-app
 Run this on a disposable macOS runner or VM, not on a personal desktop session:
 Mac2 needs Xcode, Accessibility access for Xcode Helper, and UIAutomation mode
 configuration on modern macOS. Docker cannot run the native WKWebView/Cocoa
-window this smoke is meant to test.
+window this smoke is meant to test. The harness writes screenshots,
+accessibility XML, and Appium logs to a printed temp artifact directory on each
+run.
 
 Minimum runner setup:
 
 ```sh
 sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 automationmodetool enable-automationmode-without-authentication
+brew install ffmpeg
 npm run setup:macos-appium
 npm run doctor:macos-appium
 ```
@@ -149,8 +152,8 @@ npm run doctor:macos-appium
 | M7 — Robustness | Failure surfacing, sidecar respawn, onboarding, logging. |
 | M8 — Packaging | Signed/notarized bundle, model weight download + checksum. |
 
-Current local work is past M1 and into M2 ingest depth. Full rationale and
-detailed task breakdowns are tracked internally and as
+Current `main` is past M1 and into M2 ingest depth. Full rationale and detailed
+task breakdowns are tracked internally and as
 [issues](https://github.com/0xAysh/Lume/issues) on this repo.
 
 ## Method
