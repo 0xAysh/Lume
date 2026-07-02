@@ -21,7 +21,7 @@
 use std::path::Path;
 
 use lume_core::{
-    EmbedOutcome, EmbeddedUnit, Embedding, FileId, IndexState, LumeError, VectorStore,
+    Blake3Hash, EmbedOutcome, EmbeddedUnit, Embedding, FileId, IndexState, LumeError, VectorStore,
 };
 use lume_store::SqliteStore;
 
@@ -67,11 +67,12 @@ impl<'a> BatchCommitter<'a> {
     pub fn commit(
         &self,
         file_ids: &[FileId],
+        hashes: &[Blake3Hash],
         outcomes: Vec<EmbedOutcome>,
     ) -> Result<(), LumeError> {
-        let mut embedded: Vec<(FileId, Embedding)> = Vec::new();
+        let mut embedded: Vec<(FileId, Blake3Hash, Embedding)> = Vec::new();
 
-        for (&file_id, outcome) in file_ids.iter().zip(outcomes) {
+        for ((&file_id, &hash), outcome) in file_ids.iter().zip(hashes).zip(outcomes) {
             match outcome {
                 EmbedOutcome::Ok {
                     emb,
@@ -79,7 +80,7 @@ impl<'a> BatchCommitter<'a> {
                 } => {
                     let thumb_path = self.thumbnails_dir.join(format!("{file_id}.jpg"));
                     match std::fs::write(&thumb_path, &thumbnail_jpeg) {
-                        Ok(()) => embedded.push((file_id, emb)),
+                        Ok(()) => embedded.push((file_id, hash, emb)),
                         Err(err) => {
                             tracing::warn!(
                                 file_id,
@@ -105,7 +106,7 @@ impl<'a> BatchCommitter<'a> {
 
         let units: Vec<EmbeddedUnit<'_>> = embedded
             .iter()
-            .map(|(file, emb)| EmbeddedUnit {
+            .map(|(file, _, emb)| EmbeddedUnit {
                 file: *file,
                 frame_ts: None,
                 emb,
@@ -116,9 +117,9 @@ impl<'a> BatchCommitter<'a> {
         // commits do the Items flip to Done, so a failure here can never leave
         // a Done Item without a searchable Unit.
         self.vectors.insert_batch(&units)?;
-        for (file_id, _) in &embedded {
+        for (file_id, hash, _) in &embedded {
             self.state
-                .set_file_state(*file_id, IndexState::Done, None)?;
+                .set_file_state(*file_id, IndexState::Done, Some(*hash))?;
         }
         Ok(())
     }

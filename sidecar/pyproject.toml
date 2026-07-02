@@ -8,8 +8,21 @@ requires-python = ">=3.11"
 dependencies = []
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.6"]
-m0 = ["numpy>=2", "pillow>=11", "torch>=2.7", "torchvision>=0.22", "transformers>=4.53"]
+dev = [
+    "pillow>=12.2.0",
+    "pillow-heif>=1.4.0",
+    "pytest>=8",
+    "ruff>=0.6",
+]
+m0 = [
+    "numpy>=2",
+    "pillow>=11",
+    "pillow-heif>=1.4.0",
+    "rawpy>=0.27.0",
+    "torch>=2.7",
+    "torchvision>=0.22",
+    "transformers>=4.53",
+]
 
 [build-system]
 requires = ["hatchling"]

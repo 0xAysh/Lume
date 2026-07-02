@@ -21,6 +21,7 @@ lume-core.workspace = true
 lume-ipc.workspace = true
 lume-store.workspace = true
 lume-index.workspace = true
+lume-platform.workspace = true
 half.workspace = true
 tauri = { version = "2", features = [] }
 serde.workspace = true

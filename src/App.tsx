@@ -76,6 +76,7 @@ export default function App() {
       <form onSubmit={runSearch}>
         <input
           autoFocus
+          aria-label="Search query"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="a girl riding a bicycle"
@@ -95,7 +96,7 @@ export default function App() {
             <img
               key={hit.fileId}
               src={hit.thumbUrl}
-              alt=""
+              alt={`Search result ${hit.fileId}`}
               className="aspect-square w-full rounded-md object-cover"
             />
           ))}

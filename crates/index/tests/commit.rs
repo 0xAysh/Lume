@@ -10,8 +10,8 @@ use std::path::PathBuf;
 
 use half::f16;
 use lume_core::{
-    EmbedOutcome, EmbeddedUnit, Embedding, FileId, IndexState, LumeError, MediaKind, ScoredHit,
-    SearchFilters, VectorStore,
+    Blake3Hash, EmbedOutcome, EmbeddedUnit, Embedding, FileId, IndexState, LumeError, MediaKind,
+    ScoredHit, SearchFilters, VectorStore,
 };
 use lume_index::BatchCommitter;
 use lume_store::SqliteStore;
@@ -43,6 +43,10 @@ fn state_of(store: &SqliteStore, id: FileId) -> IndexState {
         .state
 }
 
+fn hash(byte: u8) -> Blake3Hash {
+    Blake3Hash([byte; 32])
+}
+
 /// A thumbnail write error for one Item must never leave that Item `Done`
 /// without its Tile, and must never abort the sibling Units in the same batch.
 #[test]
@@ -61,7 +65,11 @@ fn thumbnail_write_failure_does_not_mark_item_done_and_spares_siblings() {
 
     let committer = BatchCommitter::new(&thumbs, &store, &store);
     committer
-        .commit(&[a, b], vec![ok_outcome(), ok_outcome()])
+        .commit(
+            &[a, b],
+            &[hash(1), hash(2)],
+            vec![ok_outcome(), ok_outcome()],
+        )
         .unwrap();
 
     // a: its thumbnail write failed, so it must NOT be Done.
@@ -70,6 +78,16 @@ fn thumbnail_write_failure_does_not_mark_item_done_and_spares_siblings() {
 
     // b: committed fully despite a's failure (no sibling abort).
     assert_eq!(state_of(&store, b), IndexState::Done);
+    assert_eq!(
+        store
+            .list_files()
+            .unwrap()
+            .into_iter()
+            .find(|f| f.id == b)
+            .unwrap()
+            .hash,
+        Some(hash(2))
+    );
     assert_eq!(
         fs::read(thumbs.join(format!("{b}.jpg"))).unwrap(),
         STUB_JPEG
@@ -120,7 +138,11 @@ fn vector_insert_failure_leaves_no_item_done_or_searchable() {
     // the test can observe that no Item was marked Done.
     let vectors = FailingVectors;
     let committer = BatchCommitter::new(&thumbs, &vectors, &store);
-    let result = committer.commit(&[a, b], vec![ok_outcome(), ok_outcome()]);
+    let result = committer.commit(
+        &[a, b],
+        &[hash(1), hash(2)],
+        vec![ok_outcome(), ok_outcome()],
+    );
 
     // The commit surfaces the vector-store error rather than swallowing it.
     assert!(result.is_err());

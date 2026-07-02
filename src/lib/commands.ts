@@ -42,9 +42,14 @@ export function search(query: string, filters?: SearchFilters): Promise<SearchHi
   return invoke<SearchHit[]>("search", { query, filters: filters ?? null });
 }
 
+/** Explicit reconciliation pass over the watched folders. */
+export function reconcileNow(): Promise<void> {
+  return invoke<void>("reconcile_now");
+}
+
 /** Kick off (or resume) indexing of the watched folders. */
 export function startIndex(): Promise<void> {
-  return invoke<void>("start_index");
+  return reconcileNow();
 }
 
 /** Poll current indexing progress. */

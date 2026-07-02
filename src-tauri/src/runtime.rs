@@ -9,8 +9,8 @@
 //! runtime behavior that would otherwise leak across several command/protocol
 //! handlers:
 //!
-//! 1. **The indexing run.** [`IndexRun`] plus the concurrency guard in
-//!    [`AppRuntime::start_index`] and the phase state machine in
+//! 1. **The indexing/reconciliation run.** [`IndexRun`] plus the concurrency guard in
+//!    [`AppRuntime::start_reconcile`] and the phase state machine in
 //!    [`AppRuntime::index_status`] (see [`derive_phase`]). Two commands read/write
 //!    one `current_run`; the "reject a second overlapping run" and "derive
 //!    Idle/Scanning/Indexing from progress" rules live in one place.
@@ -35,9 +35,12 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use lume_core::rank::{rank_tiles, Tile, TileMeta};
-use lume_core::{Config, FileId, MediaKind, SearchFilters, Sidecar, VectorStore};
+use lume_core::{
+    Config, FileId, FsEvent, MediaKind, Platform, SearchFilters, Sidecar, VectorStore,
+};
 use lume_index::{Indexer, Progress};
 use lume_ipc::SocketSidecar;
+use lume_platform::MacPlatform;
 use lume_store::SqliteStore;
 
 const SIDECAR_SOCKET_NAME: &str = "sidecar.sock";
@@ -48,18 +51,19 @@ const SIDECAR_SOCKET_NAME: &str = "sidecar.sock";
 pub struct AppRuntime {
     store: Arc<SqliteStore>,
     sidecar: Arc<SocketSidecar>,
+    platform: Arc<MacPlatform>,
     config: Config,
     watch_folder: PathBuf,
     thumbnails_dir: PathBuf,
-    current_run: Mutex<Option<IndexRun>>,
+    current_run: Arc<Mutex<Option<IndexRun>>>,
     /// Held so the Python sidecar is killed + waited when the runtime drops
     /// (its `Drop` does the work). Never read directly.
     _sidecar_child: SidecarChild,
 }
 
-/// One in-flight (or most-recently-finished) `Indexer::run`, so `start_index` can
-/// guard against a second concurrent run and `index_status` can report real
-/// progress (M1 Slice 3's [`Progress`] handle).
+/// One in-flight (or most-recently-finished) `Indexer::run`, so reconcile/index
+/// triggers can guard against a second concurrent run and `index_status` can
+/// report real progress (M1 Slice 3's [`Progress`] handle).
 struct IndexRun {
     handle: JoinHandle<()>,
     progress: Arc<Progress>,
@@ -104,16 +108,21 @@ impl AppRuntime {
         let store =
             Arc::new(SqliteStore::open(data_dir.join("lume.sqlite3")).expect("open SqliteStore"));
         let sidecar = Arc::new(SocketSidecar::new(&socket_path, config.thumbnails.grid_px));
+        let platform = Arc::new(MacPlatform::new());
+        let watch_folder = watch_folder_from_env();
 
-        AppRuntime {
+        let runtime = AppRuntime {
             store,
             sidecar,
-            watch_folder: watch_folder_from_env(),
+            platform,
+            watch_folder,
             config,
             thumbnails_dir,
-            current_run: Mutex::new(None),
+            current_run: Arc::new(Mutex::new(None)),
             _sidecar_child: SidecarChild(Mutex::new(spawn_sidecar(&socket_path))),
-        }
+        };
+        runtime.start_live_watcher();
+        runtime
     }
 
     /// Semantic search → ranked Tiles (DESIGN §12). Normalizes the query, then
@@ -142,33 +151,63 @@ impl AppRuntime {
         Ok(rank_tiles(hits, results, m1_image_meta).tiles)
     }
 
-    /// Kick off (or resume) indexing of the watched folder. Errors if a run is
-    /// already in progress rather than starting a second, overlapping one — the
-    /// concurrency guard the runtime owns so no command has to.
-    pub fn start_index(&self) -> Result<(), String> {
-        let mut current = self.current_run.lock().expect("current_run lock poisoned");
-        if let Some(run) = current.as_ref() {
-            if !run.handle.is_finished() {
-                return Err("indexing already in progress".into());
-            }
-        }
+    /// Explicit M2 reconciliation hook: walk the watched folder, apply
+    /// hash-aware deltas, and embed only the Items that need work. Periodic
+    /// scheduling and live watcher fan-in can call this same path instead of
+    /// creating a second indexing implementation.
+    pub fn start_reconcile(&self) -> Result<(), String> {
+        self.spawn_index_run()
+    }
 
-        let indexer = Indexer::new(
+    /// Backwards-compatible M1 UI command: the "index" button now triggers the
+    /// same reconcile path rather than a wipe/rebuild pass.
+    pub fn start_index(&self) -> Result<(), String> {
+        self.start_reconcile()
+    }
+
+    fn spawn_index_run(&self) -> Result<(), String> {
+        spawn_index_run(
+            &self.current_run,
             self.watch_folder.clone(),
             self.config.batch_size,
             self.thumbnails_dir.clone(),
             Arc::clone(&self.store),
             Arc::clone(&self.sidecar) as Arc<dyn Sidecar + Send + Sync>,
-        );
-        let progress = indexer.progress();
-        let handle = std::thread::spawn(move || {
-            if let Err(err) = indexer.run() {
-                tracing::error!(%err, "indexing run failed");
-            }
-        });
+        )
+    }
 
-        *current = Some(IndexRun { handle, progress });
-        Ok(())
+    fn start_live_watcher(&self) {
+        let roots = vec![self.watch_folder.clone()];
+        let current_run = Arc::clone(&self.current_run);
+        let root = self.watch_folder.clone();
+        let batch_size = self.config.batch_size;
+        let thumbnails_dir = self.thumbnails_dir.clone();
+        let store = Arc::clone(&self.store);
+        let sidecar = Arc::clone(&self.sidecar) as Arc<dyn Sidecar + Send + Sync>;
+
+        let result = self.platform.watch(
+            &roots,
+            Box::new(move |event| {
+                if !is_indexable_delta(&event) {
+                    return;
+                }
+                let result = spawn_index_run(
+                    &current_run,
+                    root.clone(),
+                    batch_size,
+                    thumbnails_dir.clone(),
+                    Arc::clone(&store),
+                    Arc::clone(&sidecar),
+                );
+                if let Err(err) = result {
+                    tracing::debug!(%err, ?event, "filesystem delta did not start reconcile");
+                }
+            }),
+        );
+
+        if let Err(err) = result {
+            tracing::warn!(%err, "live filesystem watcher failed to start");
+        }
     }
 
     /// Poll current indexing progress, deriving the coarse [`RunPhase`] from the
@@ -219,6 +258,41 @@ fn derive_phase(finished: bool, total: u64) -> RunPhase {
         RunPhase::Scanning
     } else {
         RunPhase::Indexing
+    }
+}
+
+fn spawn_index_run(
+    current_run: &Arc<Mutex<Option<IndexRun>>>,
+    root: PathBuf,
+    batch_size: usize,
+    thumbnails_dir: PathBuf,
+    store: Arc<SqliteStore>,
+    sidecar: Arc<dyn Sidecar + Send + Sync>,
+) -> Result<(), String> {
+    let mut current = current_run.lock().expect("current_run lock poisoned");
+    if let Some(run) = current.as_ref() {
+        if !run.handle.is_finished() {
+            return Err("indexing/reconciliation already in progress".into());
+        }
+    }
+
+    let indexer = Indexer::new(root, batch_size, thumbnails_dir, store, sidecar);
+    let progress = indexer.progress();
+    let handle = std::thread::spawn(move || {
+        if let Err(err) = indexer.run() {
+            tracing::error!(%err, "indexing run failed");
+        }
+    });
+
+    *current = Some(IndexRun { handle, progress });
+    Ok(())
+}
+
+fn is_indexable_delta(event: &FsEvent) -> bool {
+    match event {
+        FsEvent::Created(path) | FsEvent::Modified(path) | FsEvent::Removed(path) => {
+            path.extension().is_some()
+        }
     }
 }
 
@@ -331,10 +405,12 @@ fn spawn_sidecar(socket_path: &Path) -> Option<Child> {
 #[cfg(test)]
 mod tests {
     use super::{
-        derive_phase, ensure_private_dir, normalize_query, resolve_thumbnail, sidecar_socket_path,
-        RunPhase,
+        derive_phase, ensure_private_dir, is_indexable_delta, normalize_query, resolve_thumbnail,
+        sidecar_socket_path, RunPhase,
     };
+    use lume_core::FsEvent;
     use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
 
     fn request(uri: &str) -> tauri::http::Request<Vec<u8>> {
         tauri::http::Request::builder()
@@ -412,5 +488,21 @@ mod tests {
         // A finished thread is Idle regardless of the last counters.
         assert_eq!(derive_phase(true, 0), RunPhase::Idle);
         assert_eq!(derive_phase(true, 12), RunPhase::Idle);
+    }
+
+    #[test]
+    fn filesystem_file_deltas_trigger_reconcile_but_directory_noise_does_not() {
+        assert!(is_indexable_delta(&FsEvent::Created(PathBuf::from(
+            "/photos/new.jpg"
+        ))));
+        assert!(is_indexable_delta(&FsEvent::Modified(PathBuf::from(
+            "/photos/edit.heic"
+        ))));
+        assert!(is_indexable_delta(&FsEvent::Removed(PathBuf::from(
+            "/photos/gone.CR2"
+        ))));
+        assert!(!is_indexable_delta(&FsEvent::Created(PathBuf::from(
+            "/photos/NestedAlbum"
+        ))));
     }
 }

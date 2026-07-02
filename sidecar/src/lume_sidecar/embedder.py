@@ -17,6 +17,8 @@ from __future__ import annotations
 import io
 import logging
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -28,6 +30,42 @@ logger = logging.getLogger(__name__)
 # but the sidecar always emits the model's native dimensionality.
 EMBED_DIM = 768
 FP16_BYTES = EMBED_DIM * 2
+
+_HEIF_EXTS = {".heic", ".heif", ".heics", ".heifs", ".hif"}
+_RAW_EXTS = {
+    ".3fr",
+    ".arw",
+    ".cr2",
+    ".cr3",
+    ".dcr",
+    ".dng",
+    ".erf",
+    ".fff",
+    ".gpr",
+    ".iiq",
+    ".k25",
+    ".kdc",
+    ".mrw",
+    ".nef",
+    ".nrw",
+    ".orf",
+    ".pef",
+    ".raf",
+    ".raw",
+    ".rw2",
+    ".sr2",
+    ".srf",
+    ".srw",
+    ".x3f",
+}
+
+
+@dataclass(frozen=True)
+class DecodedStill:
+    """A still Item decoded inside the Sidecar black box."""
+
+    image: PILImage
+    embedded_thumb_jpeg: bytes | None = None
 
 
 class Embedder(ABC):
@@ -117,10 +155,8 @@ class SiglipEmbedder(Embedder):
         self._text = SiglipTextModel.from_pretrained(model_name).to(self._device).eval()
 
     def embed_image(self, path: str, thumb_px: int) -> tuple[bytes, bytes]:
-        from PIL import Image
-
-        image = Image.open(path).convert("RGB")
-        return (self._embed_pixels(image), _thumbnail_jpeg(image, thumb_px))
+        decoded = _decode_still_image(path)
+        return (self._embed_pixels(decoded.image), _thumbnail_jpeg(decoded, thumb_px))
 
     def embed_frame(self, path: str, frame_ts: float, thumb_px: int) -> tuple[bytes, bytes]:
         raise NotImplementedError("video frame embedding lands in M3")
@@ -157,8 +193,67 @@ def _normalized_fp16_bytes(torch, pooled) -> bytes:
     return array.astype("<f2").tobytes()
 
 
-def _thumbnail_jpeg(image: PILImage, thumb_px: int) -> bytes:
+def _decode_still_image(path: str) -> DecodedStill:
+    """Decode a still image for embedding and Tile thumbnail generation.
+
+    Python owns all still decode (DESIGN §6). HEIC support is registered inside
+    this black box via `pillow-heif`; RAW support uses `rawpy`'s embedded JPEG
+    preview as the image source. That keeps RAW thumbnails cheap and avoids a
+    full demosaic just to create a 400px Tile.
+    """
+    ext = Path(path).suffix.lower()
+    if ext in _RAW_EXTS:
+        return _decode_raw_preview(path)
+
+    if ext in _HEIF_EXTS:
+        _register_heif_opener()
+
     from PIL import Image
+
+    with Image.open(path) as image:
+        return DecodedStill(image=image.convert("RGB"))
+
+
+def _register_heif_opener() -> None:
+    try:
+        import pillow_heif
+    except ImportError as exc:
+        raise RuntimeError("HEIC support requires pillow-heif") from exc
+
+    pillow_heif.register_heif_opener()
+
+
+def _decode_raw_preview(path: str) -> DecodedStill:
+    from PIL import Image
+
+    try:
+        import rawpy
+    except ImportError as exc:
+        raise RuntimeError("RAW support requires rawpy") from exc
+
+    with rawpy.imread(path) as raw:
+        thumb = raw.extract_thumb()
+
+    if thumb.format == rawpy.ThumbFormat.JPEG:
+        thumb_jpeg = bytes(thumb.data)
+        with Image.open(io.BytesIO(thumb_jpeg)) as image:
+            return DecodedStill(image=image.convert("RGB"), embedded_thumb_jpeg=thumb_jpeg)
+
+    bitmap_format = getattr(rawpy.ThumbFormat, "BITMAP", None)
+    if bitmap_format is not None and thumb.format == bitmap_format:
+        image = Image.fromarray(thumb.data).convert("RGB")
+        return DecodedStill(image=image)
+
+    raise RuntimeError("RAW file has no embedded preview")
+
+
+def _thumbnail_jpeg(image: PILImage | DecodedStill, thumb_px: int) -> bytes:
+    from PIL import Image
+
+    if isinstance(image, DecodedStill):
+        if image.embedded_thumb_jpeg is not None:
+            return image.embedded_thumb_jpeg
+        image = image.image
 
     resized = image.copy()
     resized.thumbnail((thumb_px, thumb_px), Image.Resampling.LANCZOS)

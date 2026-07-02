@@ -9,7 +9,10 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "setup:macos-appium": "sh -c 'appium driver list --installed 2>&1 | grep -q \"mac2@\" || appium driver install mac2'",
+    "doctor:macos-appium": "appium driver doctor mac2",
+    "test:macos-app": "node scripts/macos_appium_smoke.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",
@@ -22,6 +25,8 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.4",
+    "appium": "^3.5.2",
+    "appium-mac2-driver": "^4.0.3",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.2",
     "vite": "^6.0.3"

@@ -89,8 +89,15 @@ fn search(
     Ok(tiles.iter().map(to_search_hit).collect())
 }
 
-/// Kick off (or resume) indexing of the watched folder. The concurrency guard
-/// and run bookkeeping live in [`AppRuntime::start_index`].
+/// Explicit reconciliation hook for startup/manual safety-net scans. The
+/// concurrency guard and run bookkeeping live in [`AppRuntime::start_reconcile`].
+#[tauri::command]
+fn reconcile_now(runtime: tauri::State<AppRuntime>) -> Result<(), String> {
+    runtime.start_reconcile()
+}
+
+/// Kick off (or resume) indexing of the watched folder. Kept as the M1 UI
+/// command alias; it now delegates to the same reconcile path.
 #[tauri::command]
 fn start_index(runtime: tauri::State<AppRuntime>) -> Result<(), String> {
     runtime.start_index()
@@ -153,7 +160,12 @@ pub fn run() {
             app.manage(AppRuntime::bootstrap());
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![search, start_index, index_status])
+        .invoke_handler(tauri::generate_handler![
+            search,
+            reconcile_now,
+            start_index,
+            index_status
+        ])
         .run(tauri::generate_context!())
         .expect("error while running Lume");
 }

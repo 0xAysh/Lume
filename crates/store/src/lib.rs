@@ -19,6 +19,7 @@
 
 mod schema;
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, Once};
 use std::time::Duration;
@@ -27,7 +28,7 @@ use lume_core::{
     Blake3Hash, EmbeddedUnit, Embedding, FileId, FileRecord, IndexState, LumeError, MediaKind,
     ScoredHit, SearchFilters, VectorStore,
 };
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
 static REGISTER_SQLITE_VEC: Once = Once::new();
 
@@ -114,6 +115,138 @@ impl SqliteStore {
             |row| row.get(0),
         )
         .map_err(store_err)
+    }
+
+    /// Ensure a walked Item has a metadata row and decide whether it still
+    /// needs embedding for this run.
+    ///
+    /// M2 resume trusts stable `Done`/`Failed` Items: if path, size, and mtime
+    /// are unchanged, the Indexer skips them instead of embedding again. A
+    /// `Pending` Item is resumable work. If the file changed, old Units are
+    /// discarded and the Item goes back to `Pending`; deeper rename/delete
+    /// reconciliation lands in later M2 slices.
+    pub fn prepare_file_for_index(
+        &self,
+        path: &Path,
+        kind: MediaKind,
+        size: u64,
+        mtime: i64,
+        hash: Blake3Hash,
+        seen_paths: &BTreeSet<PathBuf>,
+    ) -> Result<Option<FileId>, LumeError> {
+        let folder = path.parent().unwrap_or_else(|| Path::new(""));
+        let mut conn = self.writer.lock().expect("writer lock poisoned");
+        let existing = conn
+            .query_row(
+                "SELECT id, size, mtime, hash, state FROM files WHERE path = ?1",
+                [path_to_text(path)],
+                |row| {
+                    let hash: Option<Vec<u8>> = row.get(3)?;
+                    Ok((
+                        row.get::<_, FileId>(0)?,
+                        row.get::<_, i64>(1)? as u64,
+                        row.get::<_, i64>(2)?,
+                        hash.map(|bytes| Blake3Hash(bytes_to_hash_array(&bytes))),
+                        i64_to_state(row.get(4)?),
+                    ))
+                },
+            )
+            .optional()
+            .map_err(store_err)?;
+
+        match existing {
+            Some((id, existing_size, existing_mtime, existing_hash, state))
+                if existing_size == size
+                    && existing_mtime == mtime
+                    && existing_hash == Some(hash) =>
+            {
+                match state {
+                    IndexState::Pending => Ok(Some(id)),
+                    IndexState::Done | IndexState::Failed | IndexState::Stale => Ok(None),
+                }
+            }
+            Some((id, _, _, _, _)) => {
+                let tx = conn.transaction().map_err(store_err)?;
+                delete_units_for_file(&tx, id)?;
+                tx.execute(
+                    "UPDATE files
+                     SET kind = ?1, size = ?2, mtime = ?3, hash = ?4, state = ?5, folder = ?6
+                     WHERE id = ?7",
+                    rusqlite::params![
+                        kind_to_i64(kind),
+                        size as i64,
+                        mtime,
+                        hash.0.to_vec(),
+                        state_to_i64(IndexState::Pending),
+                        path_to_text(folder),
+                        id,
+                    ],
+                )
+                .map_err(store_err)?;
+                tx.commit().map_err(store_err)?;
+                Ok(Some(id))
+            }
+            None => {
+                if move_done_file_by_hash(&conn, path, kind, size, mtime, hash, seen_paths)? {
+                    return Ok(None);
+                }
+
+                conn.query_row(
+                        "INSERT INTO files (path, kind, size, mtime, hash, state, width, height, folder)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, 0, ?7)
+                         RETURNING id",
+                        rusqlite::params![
+                            path_to_text(path),
+                            kind_to_i64(kind),
+                            size as i64,
+                            mtime,
+                            hash.0.to_vec(),
+                            state_to_i64(IndexState::Pending),
+                            path_to_text(folder),
+                        ],
+                        |row| row.get(0),
+                    )
+                    .optional()
+                    .map_err(store_err)?
+                    .ok_or_else(|| LumeError::Store("inserted file without returned id".into()))
+                    .map(Some)
+            }
+        }
+    }
+
+    /// Delete indexed Items under `root` that are absent from the latest
+    /// primary-Item walk. Hash-matched moves are updated before this pass, so
+    /// their new path is present in `seen_paths` and their Units are preserved.
+    pub fn delete_missing_files_under_root(
+        &self,
+        root: &Path,
+        seen_paths: &BTreeSet<PathBuf>,
+    ) -> Result<(), LumeError> {
+        let mut conn = self.writer.lock().expect("writer lock poisoned");
+        let rows = {
+            let mut stmt = conn
+                .prepare("SELECT id, path FROM files ORDER BY id")
+                .map_err(store_err)?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, FileId>(0)?,
+                        PathBuf::from(row.get::<_, String>(1)?),
+                    ))
+                })
+                .map_err(store_err)?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(store_err)?
+        };
+
+        let tx = conn.transaction().map_err(store_err)?;
+        for (id, path) in rows {
+            if path.starts_with(root) && !seen_paths.contains(&path) {
+                delete_units_for_file(&tx, id)?;
+                tx.execute("DELETE FROM files WHERE id = ?1", [id])
+                    .map_err(store_err)?;
+            }
+        }
+        tx.commit().map_err(store_err)
     }
 
     /// All `files` rows, oldest-inserted first.
@@ -245,13 +378,7 @@ impl VectorStore for SqliteStore {
     fn delete_file(&self, file: FileId) -> Result<(), LumeError> {
         let mut conn = self.writer.lock().expect("writer lock poisoned");
         let tx = conn.transaction().map_err(store_err)?;
-        tx.execute(
-            "DELETE FROM vec_units WHERE rowid IN (SELECT id FROM units WHERE file_id = ?1)",
-            [file],
-        )
-        .map_err(store_err)?;
-        tx.execute("DELETE FROM units WHERE file_id = ?1", [file])
-            .map_err(store_err)?;
+        delete_units_for_file(&tx, file)?;
         tx.execute("DELETE FROM files WHERE id = ?1", [file])
             .map_err(store_err)?;
         tx.commit().map_err(store_err)
@@ -276,6 +403,75 @@ fn open_reader(db_path: &Path) -> Result<Connection, LumeError> {
     conn.busy_timeout(Duration::from_millis(5_000))
         .map_err(store_err)?;
     Ok(conn)
+}
+
+fn move_done_file_by_hash(
+    conn: &Connection,
+    path: &Path,
+    kind: MediaKind,
+    size: u64,
+    mtime: i64,
+    hash: Blake3Hash,
+    seen_paths: &BTreeSet<PathBuf>,
+) -> Result<bool, LumeError> {
+    let folder = path.parent().unwrap_or_else(|| Path::new(""));
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, path FROM files
+             WHERE hash = ?1 AND state = ?2 AND path != ?3
+             ORDER BY id",
+        )
+        .map_err(store_err)?;
+    let matches = stmt
+        .query_map(
+            rusqlite::params![
+                hash.0.to_vec(),
+                state_to_i64(IndexState::Done),
+                path_to_text(path),
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, FileId>(0)?,
+                    PathBuf::from(row.get::<_, String>(1)?),
+                ))
+            },
+        )
+        .map_err(store_err)?;
+
+    for row in matches {
+        let (id, old_path) = row.map_err(store_err)?;
+        if seen_paths.contains(&old_path) {
+            continue;
+        }
+        conn.execute(
+            "UPDATE files
+             SET path = ?1, kind = ?2, size = ?3, mtime = ?4, hash = ?5, folder = ?6
+             WHERE id = ?7",
+            rusqlite::params![
+                path_to_text(path),
+                kind_to_i64(kind),
+                size as i64,
+                mtime,
+                hash.0.to_vec(),
+                path_to_text(folder),
+                id,
+            ],
+        )
+        .map_err(store_err)?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn delete_units_for_file(conn: &Connection, file: FileId) -> Result<(), LumeError> {
+    conn.execute(
+        "DELETE FROM vec_units WHERE rowid IN (SELECT id FROM units WHERE file_id = ?1)",
+        [file],
+    )
+    .map_err(store_err)?;
+    conn.execute("DELETE FROM units WHERE file_id = ?1", [file])
+        .map_err(store_err)?;
+    Ok(())
 }
 
 /// WAL + `busy_timeout` — writers don't block readers, and lock contention

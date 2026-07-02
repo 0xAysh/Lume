@@ -9,3 +9,4 @@ repository.workspace = true
 
 [dependencies]
 lume-core.workspace = true
+notify = "8"

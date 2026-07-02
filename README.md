@@ -14,9 +14,9 @@ React/Vite UI and a Python sidecar running SigLIP 2 for embeddings. Vectors
 are stored and searched with `sqlite-vec` using exact (brute-force) k-NN —
 no approximate-search accuracy loss at this scale.
 
-> **Status:** pre-alpha. The workspace is scaffolded and the core seams
-> (config, error types, the sidecar wire protocol) are under active
-> development. There is no working build yet — see [Roadmap](#roadmap).
+> **Status:** pre-alpha. The M1 walking skeleton and early M2 ingest slices are
+> implemented locally on the active development branch, but the app is not yet
+> packaged or ready for daily use.
 
 ---
 
@@ -106,6 +106,35 @@ make fmt      # auto-format all three languages
 
 Run `make help` for the full list of targets.
 
+### macOS App-Window Smoke
+
+The app-window smoke harness lives in
+[`scripts/macos_appium_smoke.mjs`](scripts/macos_appium_smoke.mjs). It uses
+Appium's Mac2 driver to automate the real macOS `.app` through XCTest, builds
+the debug Tauri app bundle, creates an isolated `HOME` and watched-folder
+fixture, runs with `LUME_SIDECAR_FAKE_EMBEDDER=1`, clicks the index button,
+searches, and asserts that accessible result images render.
+
+```sh
+npm run setup:macos-appium
+npm run doctor:macos-appium
+npm run test:macos-app
+```
+
+Run this on a disposable macOS runner or VM, not on a personal desktop session:
+Mac2 needs Xcode, Accessibility access for Xcode Helper, and UIAutomation mode
+configuration on modern macOS. Docker cannot run the native WKWebView/Cocoa
+window this smoke is meant to test.
+
+Minimum runner setup:
+
+```sh
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+automationmodetool enable-automationmode-without-authentication
+npm run setup:macos-appium
+npm run doctor:macos-appium
+```
+
 ## Roadmap
 
 | Milestone | Outcome |
@@ -120,9 +149,9 @@ Run `make help` for the full list of targets.
 | M7 — Robustness | Failure surfacing, sidecar respawn, onboarding, logging. |
 | M8 — Packaging | Signed/notarized bundle, model weight download + checksum. |
 
-Currently in **M0**. Full rationale and detailed task breakdowns are tracked
-internally and as [issues](https://github.com/0xAysh/Lume/issues) on this
-repo.
+Current local work is past M1 and into M2 ingest depth. Full rationale and
+detailed task breakdowns are tracked internally and as
+[issues](https://github.com/0xAysh/Lume/issues) on this repo.
 
 ## Method
 
