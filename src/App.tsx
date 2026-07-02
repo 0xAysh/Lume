@@ -19,12 +19,15 @@ export default function App() {
     };
   }, []);
 
-  async function runSearch(e: React.FormEvent) {
+  async function runSearch(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!query.trim()) return;
+    const formQuery = new FormData(e.currentTarget).get("query");
+    const nextQuery = typeof formQuery === "string" ? formQuery : query;
+    if (!nextQuery.trim()) return;
+    setQuery(nextQuery);
     setStatus("searching");
     try {
-      setHits(await search(query));
+      setHits(await search(nextQuery));
       setStatus("idle");
     } catch {
       setStatus("error");
@@ -73,15 +76,23 @@ export default function App() {
         </div>
       </header>
 
-      <form onSubmit={runSearch}>
+      <form onSubmit={runSearch} className="flex gap-2">
         <input
           autoFocus
+          name="query"
           aria-label="Search query"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="a girl riding a bicycle"
           className="w-full rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-3 text-base outline-none focus:border-neutral-500"
         />
+        <button
+          type="submit"
+          aria-label="Search"
+          className="rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-3 text-sm hover:border-neutral-500"
+        >
+          Search
+        </button>
       </form>
 
       <section className="flex-1 overflow-auto">

@@ -385,7 +385,8 @@ fn spawn_sidecar(socket_path: &Path) -> Option<Child> {
     if std::env::var_os("LUME_SIDECAR_FAKE_EMBEDDER").is_some() {
         args.push("--fake".to_string());
     }
-    let child = Command::new("uv")
+    let uv_bin = std::env::var_os("LUME_UV_BIN").unwrap_or_else(|| "uv".into());
+    let child = Command::new(uv_bin)
         .args(args)
         .current_dir(sidecar_dir)
         .stdin(Stdio::null())

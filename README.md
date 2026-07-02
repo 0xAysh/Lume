@@ -14,8 +14,8 @@ React/Vite UI and a Python sidecar running SigLIP 2 for embeddings. Vectors
 are stored and searched with `sqlite-vec` using exact (brute-force) k-NN —
 no approximate-search accuracy loss at this scale.
 
-> **Status:** pre-alpha. The M1 walking skeleton and early M2 ingest slices are
-> implemented locally on the active development branch, but the app is not yet
+> **Status:** pre-alpha. The M1 walking skeleton and M2 ingest-depth slices
+> through Sidecar batching are implemented locally, but the app is not yet
 > packaged or ready for daily use.
 
 ---

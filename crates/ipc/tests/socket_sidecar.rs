@@ -155,3 +155,81 @@ fn socket_sidecar_realigns_batch_results_by_unit_index() {
     server.join().unwrap();
     let _ = std::fs::remove_file(socket);
 }
+
+#[test]
+fn socket_sidecar_realigns_out_of_order_ok_and_failed_batch_results() {
+    let socket = temp_socket("embed-batch-mixed");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let _: lume_ipc::protocol::ClientMessage = read_frame(&mut stream).unwrap();
+        write_frame(
+            &mut stream,
+            &ServerMessage::EmbedResponse(lume_ipc::protocol::EmbedResponse {
+                batch_id: 0,
+                items: vec![
+                    lume_ipc::protocol::BatchItem {
+                        unit_idx: 2,
+                        result: lume_ipc::protocol::UnitResult::Ok {
+                            emb_fp16: vec![0, 66],
+                            thumb_jpeg: vec![0xFF, 0xD8, 0x02],
+                        },
+                    },
+                    lume_ipc::protocol::BatchItem {
+                        unit_idx: 0,
+                        result: lume_ipc::protocol::UnitResult::Ok {
+                            emb_fp16: vec![0, 60],
+                            thumb_jpeg: vec![0xFF, 0xD8, 0x00],
+                        },
+                    },
+                    lume_ipc::protocol::BatchItem {
+                        unit_idx: 1,
+                        result: lume_ipc::protocol::UnitResult::Failed {
+                            reason: "decode failed after out-of-order completion".into(),
+                        },
+                    },
+                ],
+            }),
+        )
+        .unwrap();
+    });
+
+    let outcomes = SocketSidecar::new(socket.clone(), 400)
+        .embed(&[
+            EmbedUnit {
+                file: 10,
+                path: "/tmp/a.jpg".into(),
+                frame_ts: None,
+            },
+            EmbedUnit {
+                file: 11,
+                path: "/tmp/b.jpg".into(),
+                frame_ts: None,
+            },
+            EmbedUnit {
+                file: 12,
+                path: "/tmp/c.jpg".into(),
+                frame_ts: None,
+            },
+        ])
+        .unwrap();
+
+    assert!(matches!(
+        &outcomes[0],
+        lume_core::EmbedOutcome::Ok {
+            emb,
+            thumbnail_jpeg
+        } if emb == &Embedding(vec![f16::from_f32(1.0)]) && thumbnail_jpeg == &[0xFF, 0xD8, 0x00]
+    ));
+    assert!(matches!(
+        &outcomes[1],
+        lume_core::EmbedOutcome::Failed { reason } if reason.contains("decode failed")
+    ));
+    assert!(matches!(
+        &outcomes[2],
+        lume_core::EmbedOutcome::Ok { emb, .. } if emb == &Embedding(vec![f16::from_f32(3.0)])
+    ));
+
+    server.join().unwrap();
+    let _ = std::fs::remove_file(socket);
+}

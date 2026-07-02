@@ -19,7 +19,7 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
 
 if TYPE_CHECKING:
     from PIL.Image import Image as PILImage
@@ -156,7 +156,7 @@ class SiglipEmbedder(Embedder):
 
     def embed_image(self, path: str, thumb_px: int) -> tuple[bytes, bytes]:
         decoded = _decode_still_image(path)
-        return (self._embed_pixels(decoded.image), _thumbnail_jpeg(decoded, thumb_px))
+        return (self.embed_decoded_stills([decoded.image])[0], _thumbnail_jpeg(decoded, thumb_px))
 
     def embed_frame(self, path: str, frame_ts: float, thumb_px: int) -> tuple[bytes, bytes]:
         raise NotImplementedError("video frame embedding lands in M3")
@@ -165,7 +165,7 @@ class SiglipEmbedder(Embedder):
         from PIL import Image
 
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        return self._embed_pixels(image)
+        return self.embed_decoded_stills([image])[0]
 
     def embed_query_text(self, text: str) -> bytes:
         torch = self._torch
@@ -175,22 +175,33 @@ class SiglipEmbedder(Embedder):
             pooled = self._text(**inputs).pooler_output
         return _normalized_fp16_bytes(torch, pooled)
 
-    def _embed_pixels(self, image: PILImage) -> bytes:
+    def embed_decoded_stills(self, images: Sequence[PILImage]) -> list[bytes]:
+        """Batch already-decoded still images through one vision forward pass.
+
+        This is intentionally a concrete SigLIP helper, not a new method on the
+        public ``Embedder`` ABC: the socket seam stays stable while the real
+        adapter gets the MPS batching path DESIGN §9 requires.
+        """
         torch = self._torch
-        inputs = self._image_processor(images=image, return_tensors="pt")
+        inputs = self._image_processor(images=list(images), return_tensors="pt")
         inputs = {k: v.to(self._device) for k, v in inputs.items()}
         with torch.inference_mode():
             pooled = self._vision(**inputs).pooler_output
-        return _normalized_fp16_bytes(torch, pooled)
+        return _normalized_fp16_batch_bytes(torch, pooled)
 
 
 def _normalized_fp16_bytes(torch, pooled) -> bytes:
     """L2-normalize (standard SigLIP practice — makes cosine similarity a
     simple L2-distance computation store-side, ADR-0003) and pack as
     little-endian fp16 bytes, matching `lume_ipc`'s `f16::from_le_bytes` read."""
+    return _normalized_fp16_batch_bytes(torch, pooled)[0]
+
+
+def _normalized_fp16_batch_bytes(torch, pooled) -> list[bytes]:
+    """Batch form of :func:`_normalized_fp16_bytes`, preserving row order."""
     normalized = torch.nn.functional.normalize(pooled, dim=-1)
     array = normalized.to("cpu").to(torch.float16).detach().numpy()
-    return array.astype("<f2").tobytes()
+    return [row.astype("<f2").tobytes() for row in array]
 
 
 def _decode_still_image(path: str) -> DecodedStill:

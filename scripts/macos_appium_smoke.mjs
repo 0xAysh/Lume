@@ -1,6 +1,14 @@
 #!/usr/bin/env node
 
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -10,9 +18,14 @@ const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const APPIUM_PORT = Number(process.env.LUME_APPIUM_PORT ?? 4723);
 const APPIUM_URL = `http://127.0.0.1:${APPIUM_PORT}`;
 const BUNDLE_ID = process.env.LUME_BUNDLE_ID ?? "app.lume.desktop";
-const APP_BUNDLE = resolve(
-  process.env.LUME_APP_BUNDLE ?? join(ROOT, "src-tauri/target/debug/bundle/macos/Lume.app"),
-);
+const UV_BIN = process.env.LUME_UV_BIN ?? commandPath("uv");
+const APP_BUNDLE_CANDIDATES = [
+  process.env.LUME_APP_BUNDLE,
+  join(ROOT, "target/debug/bundle/macos/Lume.app"),
+  join(ROOT, "src-tauri/target/debug/bundle/macos/Lume.app"),
+]
+  .filter(Boolean)
+  .map((path) => resolve(path));
 
 main().catch((error) => {
   console.error(error instanceof Error ? error.message : error);
@@ -28,18 +41,24 @@ async function main() {
 
   assertCommand("appium", "Run `npm install` and `npm run setup:macos-appium` first.");
 
-  if (!existsSync(APP_BUNDLE) || !process.env.LUME_SKIP_TAURI_BUILD) {
+  let appBundle = findAppBundle();
+  if (!appBundle || !process.env.LUME_SKIP_TAURI_BUILD) {
     run("npx", ["tauri", "build", "--debug", "--bundles", "app", "--no-sign"], {
       cwd: ROOT,
       env: process.env,
     });
+    appBundle = findAppBundle();
   }
 
-  if (!existsSync(APP_BUNDLE)) {
-    throw new Error(`Tauri app bundle not found at ${APP_BUNDLE}`);
+  if (!appBundle) {
+    throw new Error(
+      `Tauri app bundle not found. Checked:\n${APP_BUNDLE_CANDIDATES.map((path) => `- ${path}`).join("\n")}`,
+    );
   }
 
   const fixture = createFixture();
+  const artifacts = createArtifactsDir();
+  console.log(`macOS Appium smoke artifacts: ${artifacts}`);
   let appium;
   let sessionId;
   try {
@@ -48,11 +67,19 @@ async function main() {
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    appium.stdout.on("data", (chunk) => process.stdout.write(`[appium] ${chunk}`));
-    appium.stderr.on("data", (chunk) => process.stderr.write(`[appium] ${chunk}`));
+    const appiumLog = createWriteStream(join(artifacts, "appium.log"), { flags: "a" });
+    appium.stdout.on("data", (chunk) => {
+      appiumLog.write(chunk);
+      process.stdout.write(`[appium] ${chunk}`);
+    });
+    appium.stderr.on("data", (chunk) => {
+      appiumLog.write(chunk);
+      process.stderr.write(`[appium] ${chunk}`);
+    });
 
     await waitForServer(appium, 30_000);
-    sessionId = await createSession(fixture);
+    sessionId = await createSession(fixture, appBundle);
+    await saveArtifacts(sessionId, artifacts, "01-session-created");
 
     const indexButton = await findOne(sessionId, [
       ["accessibility id", "Index watched folder"],
@@ -60,12 +87,14 @@ async function main() {
       ["xpath", '//*[@label="Index watched folder" or @title="Index watched folder" or @value="Index watched folder"]'],
     ]);
     await click(sessionId, indexButton);
+    await saveArtifacts(sessionId, artifacts, "02-after-index-click");
 
     await waitUntil(
       async () => (await source(sessionId)).includes("Indexed"),
       60_000,
       "indexing did not finish or did not become visible",
     );
+    await saveArtifacts(sessionId, artifacts, "03-indexed");
 
     const searchField = await findOne(sessionId, [
       ["accessibility id", "Search query"],
@@ -77,7 +106,16 @@ async function main() {
       ["xpath", '//*[@label="Search query" or @placeholderValue="Search query" or @placeholderValue="a girl riding a bicycle"]'],
     ]);
     await click(sessionId, searchField);
-    await type(sessionId, searchField, "anything\n");
+    await type(sessionId, searchField, "anything");
+    await saveArtifacts(sessionId, artifacts, "04-query-entered");
+
+    const searchButton = await findOne(sessionId, [
+      ["accessibility id", "Search"],
+      ["predicate string", 'label == "Search" OR title == "Search" OR value == "Search"'],
+      ["xpath", '//*[@label="Search" or @title="Search" or @value="Search"]'],
+    ]);
+    await click(sessionId, searchButton);
+    await saveArtifacts(sessionId, artifacts, "05-after-search-click");
 
     const resultCount = await waitUntil(
       async () => {
@@ -90,8 +128,15 @@ async function main() {
       30_000,
       "search did not render any accessible result images",
     );
+    await saveArtifacts(sessionId, artifacts, "06-results");
 
     console.log(`macOS Appium smoke passed with ${resultCount} rendered result(s).`);
+  } catch (error) {
+    if (sessionId) {
+      await saveArtifacts(sessionId, artifacts, "failure").catch(() => {});
+    }
+    console.error(`macOS Appium smoke failed. Inspect artifacts at ${artifacts}`);
+    throw error;
   } finally {
     if (sessionId) {
       await request("DELETE", `/session/${sessionId}`).catch(() => {});
@@ -118,26 +163,36 @@ function createFixture() {
   return { root, home, watch };
 }
 
-async function createSession(fixture) {
+function createArtifactsDir() {
+  return mkdtempSync(join(tmpdir(), "lume-macos-appium-artifacts-"));
+}
+
+async function createSession(fixture, appBundle) {
   const response = await request("POST", "/session", {
     capabilities: {
       alwaysMatch: {
         platformName: "Mac",
         "appium:automationName": "Mac2",
         "appium:bundleId": BUNDLE_ID,
-        "appium:appPath": APP_BUNDLE,
+        "appium:appPath": appBundle,
         "appium:noReset": false,
         "appium:skipAppKill": false,
         "appium:serverStartupTimeout": 180_000,
         "appium:environment": {
           HOME: fixture.home,
+          PATH: process.env.PATH ?? "",
           LUME_WATCH_FOLDER: fixture.watch,
           LUME_SIDECAR_FAKE_EMBEDDER: "1",
+          ...(UV_BIN ? { LUME_UV_BIN: UV_BIN } : {}),
         },
       },
     },
   });
   return response.value?.sessionId ?? response.sessionId;
+}
+
+function findAppBundle() {
+  return APP_BUNDLE_CANDIDATES.find((path) => existsSync(path));
 }
 
 async function findOne(sessionId, locators) {
@@ -179,6 +234,27 @@ async function type(sessionId, elementId, value) {
 async function source(sessionId) {
   const response = await request("GET", `/session/${sessionId}/source`);
   return response.value;
+}
+
+async function screenshot(sessionId) {
+  const response = await request("GET", `/session/${sessionId}/screenshot`);
+  return response.value;
+}
+
+async function saveArtifacts(sessionId, artifacts, label) {
+  try {
+    const xml = await source(sessionId);
+    writeFileSync(join(artifacts, `${label}.xml`), xml);
+  } catch (error) {
+    writeFileSync(join(artifacts, `${label}.source-error.txt`), String(error));
+  }
+
+  try {
+    const pngBase64 = await screenshot(sessionId);
+    writeFileSync(join(artifacts, `${label}.png`), Buffer.from(pngBase64, "base64"));
+  } catch (error) {
+    writeFileSync(join(artifacts, `${label}.screenshot-error.txt`), String(error));
+  }
 }
 
 async function waitForServer(child, timeoutMs) {
@@ -230,6 +306,13 @@ function assertCommand(command, message) {
   if (check.error?.code === "ENOENT") {
     throw new Error(`${command} is not installed. ${message}`);
   }
+}
+
+function commandPath(command) {
+  const check = spawnSync("/bin/sh", ["-lc", `command -v ${command}`], {
+    encoding: "utf8",
+  });
+  return check.status === 0 ? check.stdout.trim() : null;
 }
 
 function run(command, args, options) {

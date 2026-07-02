@@ -7,84 +7,71 @@ from __future__ import annotations
 import argparse
 import os
 import socket
+import threading
 from pathlib import Path
 from typing import Any
 
+from lume_sidecar.batching import BatchPipeline, SidecarScheduler
 from lume_sidecar.embedder import Embedder, FakeEmbedder, SiglipEmbedder
 from lume_sidecar.framing import read_frame, write_frame
-from lume_sidecar.protocol import (
-    BatchItem,
-    EmbedOneRequest,
-    EmbedOneResponse,
-    EmbedRequest,
-    EmbedResponse,
-    EmbedTextRequest,
-    UnitFailed,
-    UnitOk,
-)
 
 
-def handle_message(message: dict[str, Any], embedder: Embedder | None = None) -> dict[str, Any]:
+def handle_message(
+    message: dict[str, Any],
+    embedder: Embedder | None = None,
+    *,
+    decode_workers: int | None = None,
+) -> dict[str, Any]:
     embedder = embedder or FakeEmbedder()
-    message_type = message["type"]
-    payload = message["payload"]
-
-    if message_type == "embed":
-        req = EmbedRequest.from_dict(payload)
-        items: list[BatchItem] = []
-        for unit in req.units:
-            try:
-                if unit.frame_ts is None:
-                    emb, thumb = embedder.embed_image(unit.path, req.thumb_px)
-                else:
-                    emb, thumb = embedder.embed_frame(unit.path, unit.frame_ts, req.thumb_px)
-                result = UnitOk(emb_fp16=emb, thumb_jpeg=thumb)
-            except Exception as exc:  # noqa: BLE001 - in-band per-Unit failure by design.
-                result = UnitFailed(reason=str(exc))
-            items.append(BatchItem(unit_idx=unit.unit_idx, result=result))
-        return {
-            "type": "embed_response",
-            "payload": EmbedResponse(batch_id=req.batch_id, items=items).to_dict(),
-        }
-
-    if message_type == "embed_one":
-        req = EmbedOneRequest.from_dict(payload)
-        return {
-            "type": "embed_one_response",
-            "payload": EmbedOneResponse(
-                emb_fp16=embedder.embed_query_image(req.image_bytes)
-            ).to_dict(),
-        }
-
-    if message_type == "embed_text":
-        req = EmbedTextRequest.from_dict(payload)
-        return {
-            "type": "embed_one_response",
-            "payload": EmbedOneResponse(emb_fp16=embedder.embed_query_text(req.text)).to_dict(),
-        }
-
-    return {"type": "error", "payload": {"message": f"unknown message type: {message_type}"}}
+    return BatchPipeline(embedder, decode_workers).handle_message(message)
 
 
-def serve(socket_path: Path, embedder: Embedder | None = None) -> None:
+def serve(
+    socket_path: Path,
+    embedder: Embedder | None = None,
+    *,
+    decode_workers: int | None = None,
+    max_requests: int | None = None,
+) -> None:
     if socket_path.exists():
         socket_path.unlink()
+    embedder = embedder or FakeEmbedder()
+    scheduler = SidecarScheduler(embedder, decode_workers)
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    handlers: list[threading.Thread] = []
     try:
         server.bind(str(socket_path))
         os.chmod(socket_path, 0o600)
         server.listen()
-        while True:
+        accepted = 0
+        while max_requests is None or accepted < max_requests:
             conn, _ = server.accept()
-            with conn:
-                try:
-                    write_frame(conn, handle_message(read_frame(conn), embedder))
-                except Exception as exc:  # noqa: BLE001 - transport error response for M0 probe.
-                    write_frame(conn, {"type": "error", "payload": {"message": str(exc)}})
+            accepted += 1
+            handler = threading.Thread(
+                target=_handle_connection,
+                args=(conn, scheduler),
+                name=f"lume-sidecar-client-{accepted}",
+            )
+            handler.start()
+            if max_requests is not None:
+                handlers.append(handler)
+
+        for handler in handlers:
+            handler.join()
     finally:
+        scheduler.shutdown()
         server.close()
         if socket_path.exists():
             socket_path.unlink()
+
+
+def _handle_connection(conn: socket.socket, scheduler: SidecarScheduler) -> None:
+    with conn:
+        try:
+            future = scheduler.submit(read_frame(conn))
+            write_frame(conn, future.result())
+        except Exception as exc:  # noqa: BLE001 - transport error response for M0 probe.
+            write_frame(conn, {"type": "error", "payload": {"message": str(exc)}})
 
 
 def main() -> None:
